@@ -272,11 +272,36 @@ def _compact_tool_content(content: str, *, max_chars: int) -> str:
     digest = _digest(content)
     urls = list(dict.fromkeys(_URL_RE.findall(content)))[:10]
     preserved: dict[str, Any] = {}
+    original_chars = len(content)
     try:
         payload = json.loads(content)
     except (TypeError, ValueError):
         payload = None
     if isinstance(payload, dict):
+        previous_preserved = payload.get("preserved")
+        if payload.get("_context_compacted") is True and isinstance(
+            previous_preserved,
+            dict,
+        ):
+            preserved.update(
+                {
+                    str(key): _bounded_json_value(value)
+                    for key, value in previous_preserved.items()
+                }
+            )
+            previous_urls = payload.get("urls")
+            if isinstance(previous_urls, list):
+                urls = list(
+                    dict.fromkeys(
+                        [*urls, *(str(url) for url in previous_urls if url)]
+                    )
+                )[:10]
+            previous_chars = payload.get("original_chars")
+            if isinstance(previous_chars, int) and previous_chars > 0:
+                original_chars = previous_chars
+            previous_digest = str(payload.get("sha256") or "").strip()
+            if previous_digest:
+                digest = previous_digest
         for key, value in payload.items():
             if key in _IMPORTANT_KEYS:
                 preserved[key] = _bounded_json_value(value)
@@ -285,7 +310,7 @@ def _compact_tool_content(content: str, *, max_chars: int) -> str:
             preserved["error"] = _bounded_json_value(error)
     compacted: dict[str, Any] = {
         "_context_compacted": True,
-        "original_chars": len(content),
+        "original_chars": original_chars,
         "sha256": digest,
         "preserved": preserved,
     }

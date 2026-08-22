@@ -142,6 +142,24 @@ def test_tool_compression_preserves_protocol_error_and_urls():
     assert messages == original
 
 
+def test_repeated_tool_compression_preserves_the_same_evidence_fields():
+    messages, tools, sections = _fixture()
+
+    projection = _budget(1_400).project(
+        messages,
+        tools=tools,
+        prompt_sections=sections,
+        source_ref="session:7:9",
+    )
+
+    tool_message = next(message for message in projection.messages if message["role"] == "tool")
+    compacted = json.loads(tool_message["content"])
+    assert projection.trace.level == ContextLevel.PRUNE_MEMORY_AND_TOOLS
+    assert compacted["preserved"]["error"]["code"] == "upstream_timeout"
+    assert compacted["preserved"]["url"] == "https://example.com/evidence"
+    assert compacted["original_chars"] > 3_000
+
+
 def test_history_summary_is_versioned_traceable_and_non_destructive():
     messages, tools, sections = _fixture()
     session_messages = deepcopy(messages[1:-3])
