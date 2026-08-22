@@ -30,6 +30,9 @@ class InboundMessage:
     chat_id: int
     content: str
     metadata: dict[str, Any] = field(default_factory=dict)
+    channel: str = "telegram"
+    turn_id: str = ""
+    trace_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -37,6 +40,9 @@ class OutboundMessage:
     chat_id: int
     content: str
     format: str = "text"
+    turn_id: str = ""
+    trace_id: str = ""
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -60,6 +66,8 @@ class Session:
     created_at: datetime = field(default_factory=datetime.utcnow)
     updated_at: datetime = field(default_factory=datetime.utcnow)
     last_consolidated: int = 0  # 对齐 akashic session.last_consolidated
+    session_key: str = ""
+    channel: str = "telegram"
 
 
 @dataclass
@@ -85,6 +93,8 @@ class BeforeTurnCtx(PipelineContext):
     extra_metadata: dict[str, Any] = field(default_factory=_empty_metadata)
     abort: bool = False
     abort_reply: str = ""
+    turn_id: str = ""
+    trace_id: str = ""
 
 
 @dataclass
@@ -104,6 +114,8 @@ class BeforeReasoningCtx(PipelineContext):
     abort: bool = False
     abort_reply: str = ""
     prompt_sections: list[Any] = field(default_factory=_empty_prompt_sections)
+    turn_id: str = ""
+    trace_id: str = ""
 
 
 @dataclass
@@ -164,6 +176,8 @@ class ReasonerResult:
     content: str
     tool_calls: list[dict[str, Any]]
     finish_reason: str
+    turn_id: str = ""
+    trace_id: str = ""
 
 
 @dataclass
@@ -179,6 +193,8 @@ class AfterReasoningCtx(PipelineContext):
     tool_chain: tuple[dict[str, Any], ...] = field(default_factory=_empty_tool_chain)
     media: list[str] = field(default_factory=_empty_str_list)
     outbound_metadata: dict[str, Any] = field(default_factory=_empty_metadata)
+    turn_id: str = ""
+    trace_id: str = ""
 
 
 @dataclass
@@ -191,6 +207,8 @@ class AfterTurnCtx(PipelineContext):
     thinking: str | None
     will_dispatch: bool
     extra_metadata: dict[str, Any] = field(default_factory=_empty_metadata)
+    turn_id: str = ""
+    trace_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -235,3 +253,5 @@ class TurnCommittedEvent:
     outbound_message: OutboundMessage
     new_memory_ids: list[UUID]
     timestamp: datetime = field(default_factory=datetime.utcnow)
+    session_key: str = ""
+    trace_id: str = ""

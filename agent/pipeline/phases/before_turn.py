@@ -1,6 +1,8 @@
 from collections.abc import Sequence
+from typing import Any
 
 from agent.core.event_bus import EventBus
+from agent.core.ids import build_session_key
 from agent.core.types import BeforeTurnCtx, InboundMessage, MemoryItem, Session
 from agent.lifecycle.phase import (
     PhaseFrame,
@@ -30,7 +32,7 @@ class BeforeTurnPhase:
         *,
         memory_engine: object,
         event_bus: EventBus | None = None,
-        plugin_modules: Sequence[object] | None = None,
+        plugin_modules: Sequence[Any] | None = None,
     ) -> None:
         self.event_bus = event_bus or EventBus.get_instance()
         self.plugin_modules = list(plugin_modules or [])
@@ -59,6 +61,12 @@ class BeforeTurnPhase:
             chat_id=message.chat_id,
             messages=saved_messages,
             last_consolidated=last_consolidated,
+            session_key=build_session_key(
+                channel=message.channel,
+                chat_id=message.chat_id,
+                user_id=message.user_id,
+            ),
+            channel=message.channel,
         )
         _sessions[key] = session
         return session
@@ -73,7 +81,11 @@ class BeforeTurnPhase:
                 scope=MemoryScope(
                     user_id=user_id,
                     chat_id=session.chat_id,
-                    session_key=f"{session.user_id}:{session.chat_id}",
+                    session_key=session.session_key or build_session_key(
+                        channel=session.channel,
+                        chat_id=session.chat_id,
+                        user_id=session.user_id,
+                    ),
                 ),
                 top_k=8,
                 memory_types=LONG_TERM_MEMORY_TYPES,
@@ -122,13 +134,19 @@ class BeforeTurnPhase:
                 inbound_message=inbound_message,
                 session=session,
                 retrieved_memories=[],
-                session_key=f"{inbound_message.user_id}:{inbound_message.chat_id}",
-                channel=str(inbound_message.metadata.get("channel") or "telegram"),
+                session_key=build_session_key(
+                    channel=inbound_message.channel,
+                    chat_id=inbound_message.chat_id,
+                    user_id=inbound_message.user_id,
+                ),
+                channel=inbound_message.channel,
                 chat_id=str(inbound_message.chat_id),
                 content=inbound_message.content,
                 history_messages=tuple(session.messages),
                 abort=True,
                 abort_reply=early_abort,
+                turn_id=inbound_message.turn_id,
+                trace_id=inbound_message.trace_id,
             )
         # 最近三条用户消息 + 当前消息，作为检索的 query_text
         user_messages = [
@@ -153,13 +171,19 @@ class BeforeTurnPhase:
             inbound_message=inbound_message,
             session=session,
             retrieved_memories=retrieved_memories,
-            session_key=f"{inbound_message.user_id}:{inbound_message.chat_id}",
-            channel=str(inbound_message.metadata.get("channel") or "telegram"),
+            session_key=build_session_key(
+                channel=inbound_message.channel,
+                chat_id=inbound_message.chat_id,
+                user_id=inbound_message.user_id,
+            ),
+            channel=inbound_message.channel,
             chat_id=str(inbound_message.chat_id),
             content=inbound_message.content,
             retrieved_memory_block=retrieved_memory_block,
             retrieval_trace_raw=dict(self.last_retrieval_trace),
             history_messages=tuple(session.messages),
+            turn_id=inbound_message.turn_id,
+            trace_id=inbound_message.trace_id,
         )
         frame.slots[_CTX_SLOT] = ctx
         frame.slots["before_turn.build_ctx"] = True

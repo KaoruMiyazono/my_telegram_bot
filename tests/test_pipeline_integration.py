@@ -137,6 +137,8 @@ async def test_end_to_end_pipeline():
         assert outbound.content == "Hello, I remember you."
         assert outbound.chat_id == 123
         assert outbound.format == "text"
+        assert outbound.turn_id.startswith("turn:")
+        assert outbound.trace_id.startswith("trace:")
 
         # Verify message was sent via adapter
         assert len(adapter.sent_messages) == 1
@@ -150,6 +152,18 @@ async def test_end_to_end_pipeline():
         event = emitted_events[0]
         assert event.user_id == 999
         assert event.outbound_message.content == "Hello, I remember you."
+        assert event.turn_id == outbound.turn_id
+        assert event.trace_id == outbound.trace_id
+        assert event.session_key == "telegram:123:999"
+        assert pipeline.last_trace is not None
+        assert pipeline.last_trace.status == "completed"
+        assert pipeline.last_trace.phases == [
+            "before_turn",
+            "before_reasoning",
+            "reasoning",
+            "after_reasoning",
+            "after_turn",
+        ]
         # persist_messages 已改为异步，new_memory_ids 不再同步返回
 
         print("test_end_to_end_pipeline: PASS")

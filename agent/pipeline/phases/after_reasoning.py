@@ -1,4 +1,5 @@
 from collections.abc import Sequence
+from typing import Any
 
 from agent.core.types import (
     AfterReasoningCtx,
@@ -14,8 +15,6 @@ from agent.lifecycle.phase import (
     collect_prefixed_slots,
 )
 from memory.store import MemoryStore
-from uuid import uuid4
-from datetime import datetime
 # `AfterReasoningPhase` 位于 Reasoner 之后、消息真正发送之前。它把模型的 `ReasonerResult` 包装成 Telegram 可发送的 `OutboundMessage`，同时给 EventBus 和插件一次修改回复、添加 metadata 或 media 的机会。
 # AfterReasoningPhase：把回答加工成“系统准备发送什么”
 
@@ -24,7 +23,7 @@ class AfterReasoningPhase:
         self,
         store: MemoryStore,
         event_bus: EventBus | None = None,
-        plugin_modules: Sequence[object] | None = None,
+        plugin_modules: Sequence[Any] | None = None,
     ) -> None:
         self.store = store
         self.event_bus = event_bus or EventBus.get_instance()
@@ -44,6 +43,8 @@ class AfterReasoningPhase:
             chat_id=chat_id,
             content=content,
             format="text",
+            turn_id=result.turn_id,
+            trace_id=result.trace_id,
         )
 
         # Persist user message and assistant message as memories
@@ -53,7 +54,7 @@ class AfterReasoningPhase:
         ctx = AfterReasoningCtx(
             reasoner_result=result,
             outbound_message=outbound_msg,
-            session_key=f"{user_id}:{chat_id}",
+            session_key=session.session_key or f"telegram:{chat_id}:{user_id}",
             channel="telegram",
             chat_id=str(chat_id),
             reply=content,
@@ -63,6 +64,8 @@ class AfterReasoningPhase:
                 if call.get("function", {}).get("name")
             ),
             tool_chain=tuple(result.tool_calls),
+            turn_id=result.turn_id,
+            trace_id=result.trace_id,
         )
         plugin_runner = PhaseModuleRunner(
             self.plugin_modules,
@@ -101,6 +104,9 @@ class AfterReasoningPhase:
                 chat_id=chat_id,
                 content=ctx.reply,
                 format=ctx.outbound_message.format,
+                turn_id=ctx.turn_id,
+                trace_id=ctx.trace_id,
+                metadata=dict(ctx.outbound_message.metadata),
             )
             ctx.reasoner_result.content = ctx.reply
         frame.slots["after_reasoning.collect_exports"] = True

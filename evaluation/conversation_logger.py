@@ -70,6 +70,8 @@ class ConversationLogger:
         """
         turn_data = {
             "turn_id": event.turn_id,
+            "trace_id": event.trace_id,
+            "session_key": event.session_key,
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "user_id": event.user_id,
             "inbound_content": event.inbound_content,

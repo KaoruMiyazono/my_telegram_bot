@@ -289,8 +289,8 @@ class BeforeReasoningPhase:
         #  事件总线，插件和工具可以通过事件总线进行通信
         event_bus: EventBus | None = None,
         #  插件依赖管理
-        plugin_modules: Sequence[object] | None = None,
-        prompt_render_modules: Sequence[object] | None = None,
+        plugin_modules: Sequence[Any] | None = None,
+        prompt_render_modules: Sequence[Any] | None = None,
         prompt_builder: SystemPromptBuilder | None = None,
         #  读self.md、long_term.md、recent_context.md的函数，返回字符串 读的是markdown
         self_model_reader: Callable[[int], str] | None = None,
@@ -358,6 +358,8 @@ class BeforeReasoningPhase:
             skill_names=list(turn_ctx.skill_names),
             retrieved_memory_block=turn_ctx.retrieved_memory_block,
             extra_hints=list(turn_ctx.extra_hints),
+            turn_id=turn_ctx.turn_id,
+            trace_id=turn_ctx.trace_id,
         )
         frame.slots[_REASONING_CTX_SLOT] = ctx
         frame.slots["before_reasoning.build_ctx"] = True

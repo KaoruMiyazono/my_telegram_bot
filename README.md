@@ -36,6 +36,19 @@
    poetry run python main.py
    ```
 
+### 开发检查
+
+安装开发工具并运行统一质量入口：
+
+```bash
+poetry run pip install -r requirements-dev.txt
+poetry run pytest
+poetry run pyright
+poetry run python eval/rag_layer_smoke.py
+```
+
+默认 pytest 包含离线单元测试、Pipeline 集成测试和五类 Golden Trace，不会运行需要真实 API 的手工 E2E 脚本。M0 的启动依赖与数据合同见 `docs/architecture/main_startup_dependency.md` 和 `docs/contracts/core_models.md`。
+
 如果当前网络不能直接访问 Telegram，可在 `.env` 中配置 HTTP 或 SOCKS 代理：
 
 ```dotenv

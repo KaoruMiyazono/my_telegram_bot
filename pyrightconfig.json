@@ -1,0 +1,19 @@
+{
+  "include": [
+    "agent/core/ids.py",
+    "agent/core/types.py",
+    "agent/observability",
+    "agent/pipeline/passive_turn.py",
+    "agent/pipeline/phases",
+    "agent/tools/runtime.py"
+  ],
+  "exclude": [
+    "tests",
+    "data",
+    "evaluation"
+  ],
+  "pythonVersion": "3.11",
+  "typeCheckingMode": "basic",
+  "reportMissingImports": "warning",
+  "reportMissingTypeStubs": false
+}

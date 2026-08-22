@@ -188,6 +188,8 @@ class Reasoner:
             request_text=ctx.content,
             tool_batch=tool_batch,
             tool_batch_index=tool_batch_index,
+            turn_id=ctx.turn_id,
+            trace_id=ctx.trace_id,
         )
         result = runtime_result.to_json()
         await self._event_bus.observe(
@@ -236,6 +238,8 @@ class Reasoner:
                     content=step_ctx.early_stop_reply or "",
                     tool_calls=tool_calls,
                     finish_reason="early_stop",
+                    turn_id=ctx.turn_id,
+                    trace_id=ctx.trace_id,
                 )
             if step_ctx.extra_hints:
                 messages.append(
@@ -395,6 +399,8 @@ class Reasoner:
                     content=content,
                     tool_calls=tool_calls,
                     finish_reason=choice.finish_reason or "stop",
+                    turn_id=ctx.turn_id,
+                    trace_id=ctx.trace_id,
                 )
 
         # Max iterations reached
@@ -402,6 +408,8 @@ class Reasoner:
             content="抱歉，处理请求时遇到问题。",
             tool_calls=tool_calls,
             finish_reason="max_iterations",
+            turn_id=ctx.turn_id,
+            trace_id=ctx.trace_id,
         )
 
     async def _run_evidence_fetch_guard(
@@ -756,7 +764,9 @@ def _annotate_tool_call_from_runtime(call: dict, result: str) -> None:
 
 
 def _tool_context(ctx: BeforeReasoningCtx) -> tuple[str, str, str]:
-    session_key = ctx.session_key or f"{ctx.session.user_id}:{ctx.session.chat_id}"
+    session_key = ctx.session_key or ctx.session.session_key or (
+        f"{ctx.channel or 'telegram'}:{ctx.session.chat_id}:{ctx.session.user_id}"
+    )
     channel = ctx.channel or "telegram"
     chat_id = ctx.chat_id or str(ctx.session.chat_id)
     return session_key, channel, chat_id

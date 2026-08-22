@@ -56,6 +56,8 @@ class ToolRuntimeResult:
     extra_messages: list[str] = field(default_factory=list)
     pre_hook_trace: list[HookTraceItem] = field(default_factory=list)
     post_hook_trace: list[HookTraceItem] = field(default_factory=list)
+    turn_id: str = ""
+    trace_id: str = ""
 
     def to_envelope(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -69,6 +71,8 @@ class ToolRuntimeResult:
                 "duration_ms": self.duration_ms,
                 "retry_count": self.retry_count,
                 "final_arguments": self.final_arguments,
+                "turn_id": self.turn_id,
+                "trace_id": self.trace_id,
             },
         }
         if self.data_text:
@@ -121,8 +125,16 @@ class ToolRuntime:
         request_text: str = "",
         tool_batch: tuple[dict[str, Any], ...] = (),
         tool_batch_index: int = 0,
+        turn_id: str = "",
+        trace_id: str = "",
     ) -> ToolRuntimeResult:
         started = time.monotonic()
+
+        def finish(result: ToolRuntimeResult) -> ToolRuntimeResult:
+            result.turn_id = turn_id
+            result.trace_id = trace_id
+            return result
+
         #  解析传入的参数
         parsed = self._parse_arguments(raw_arguments)
         #  这个一般是错误了，才做这一步，直接返回了
@@ -130,12 +142,12 @@ class ToolRuntime:
             parsed.tool_name = tool_name
             parsed.call_id = call_id
             parsed.duration_ms = _elapsed_ms(started)
-            return parsed
+            return finish(parsed)
         arguments = parsed
 
         tool = self._lookup_tool(tool_name)
         if tool is None:
-            return self._error(
+            return finish(self._error(
                 started=started,
                 tool_name=tool_name,
                 call_id=call_id,
@@ -145,11 +157,11 @@ class ToolRuntime:
                 error_code="tool_lookup",
                 message=f"Unknown tool: {tool_name}",
                 retryable=False,
-            )
+            ))
         #  看看参数和function定义是否冲突
         validation_errors = validate_json_schema(arguments, tool.parameters)
         if validation_errors:
-            return self._error(
+            return finish(self._error(
                 started=started,
                 tool_name=tool_name,
                 call_id=call_id,
@@ -159,7 +171,7 @@ class ToolRuntime:
                 error_code="input_validation",
                 message="; ".join(validation_errors),
                 retryable=True,
-            )
+            ))
 
         meta = self._metadata(tool_name)
         # 得到一个数据结构，里面有最大重试次数和重试间隔
@@ -193,7 +205,7 @@ class ToolRuntime:
                 data, data_text = normalize_tool_output(executed.output)
                 output_errors = validate_json_schema(data, tool.output_schema)
                 if output_errors:
-                    return self._error(
+                    return finish(self._error(
                         started=started,
                         tool_name=tool_name,
                         call_id=call_id,
@@ -207,8 +219,8 @@ class ToolRuntime:
                         extra_messages=executed.extra_messages,
                         pre_hook_trace=executed.pre_hook_trace,
                         post_hook_trace=executed.post_hook_trace,
-                    )
-                return ToolRuntimeResult(
+                    ))
+                return finish(ToolRuntimeResult(
                     ok=True,
                     status="success",
                     tool_name=tool_name,
@@ -222,7 +234,7 @@ class ToolRuntime:
                     extra_messages=executed.extra_messages,
                     pre_hook_trace=executed.pre_hook_trace,
                     post_hook_trace=executed.post_hook_trace,
-                )
+                ))
 
             error_code = _classify_executor_error(executed.output, executed.status)
             retryable = _is_retryable_error(error_code, str(executed.output))
@@ -242,17 +254,17 @@ class ToolRuntime:
                 post_hook_trace=executed.post_hook_trace,
             )
             if executed.status == "denied":
-                return last_result
+                return finish(last_result)
             if not last_result.retryable:
-                return last_result
+                return finish(last_result)
             if retry_policy.backoff_s > 0:
                 await asyncio.sleep(retry_policy.backoff_s)
 
         if last_result is not None:
             last_result.retryable = False
             last_result.duration_ms = _elapsed_ms(started)
-            return last_result
-        return self._error(
+            return finish(last_result)
+        return finish(self._error(
             started=started,
             tool_name=tool_name,
             call_id=call_id,
@@ -262,7 +274,7 @@ class ToolRuntime:
             error_code="unknown",
             message="Tool runtime failed without result",
             retryable=False,
-        )
+        ))
 
     async def _invoke_with_timeout(
         self,

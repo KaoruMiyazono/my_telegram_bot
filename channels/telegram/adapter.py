@@ -53,6 +53,7 @@ class TelegramAdapter:
                     "update_id": update.update_id,
                     "username": update.effective_user.username,
                 },
+                channel="telegram",
             )
 
             logger.info(

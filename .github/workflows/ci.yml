@@ -5,7 +5,7 @@ on:
   pull_request:
 
 jobs:
-  rag-layer:
+  quality-gate:
     runs-on: ubuntu-latest
     env:
       TG_BOT_TOKEN: test_token
@@ -26,7 +26,9 @@ jobs:
         run: python -m pip install poetry
 
       - name: Install dependencies
-        run: poetry install --no-interaction --no-ansi
+        run: |
+          poetry install --no-interaction --no-ansi
+          poetry run pip install -r requirements-dev.txt
 
       - name: Syntax check
         run: |
@@ -42,19 +44,11 @@ jobs:
             persistence/session_store.py \
             main.py
 
+      - name: Pyright core contracts
+        run: poetry run pyright
+
+      - name: Unified pytest suite
+        run: poetry run pytest
+
       - name: RAG lifecycle smoke
         run: poetry run python eval/rag_layer_smoke.py
-
-      - name: Script tests
-        run: |
-          poetry run python tests/test_invalidation_worker.py
-          poetry run python tests/test_consolidation_worker.py
-          poetry run python tests/test_consolidation_integration.py
-          poetry run python tests/test_before_reasoning.py
-          poetry run python tests/test_session_store.py
-          poetry run python tests/test_memory_store.py
-          poetry run python tests/test_reasoner.py
-          poetry run python tests/test_web_tools.py
-          poetry run python tests/test_replay_runner.py
-          poetry run python tests/test_longmemeval_conversion.py
-          poetry run python tests/test_pipeline_integration.py

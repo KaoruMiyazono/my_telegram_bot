@@ -78,11 +78,15 @@ async def test_runtime_success_and_json_envelope() -> None:
         call_id="c1",
         tool_name="echo",
         raw_arguments='{"x": 1}',
+        turn_id="turn:test",
+        trace_id="trace:test",
     )
     payload = result.to_envelope()
     assert payload["ok"] is True
     assert payload["data"] == {"x": 1}
     assert payload["meta"]["final_arguments"] == {"x": 1}
+    assert payload["meta"]["turn_id"] == "turn:test"
+    assert payload["meta"]["trace_id"] == "trace:test"
     print("test_runtime_success_and_json_envelope: PASS")
 
 

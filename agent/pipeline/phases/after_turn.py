@@ -1,12 +1,10 @@
 import inspect
-import time
 from collections.abc import Sequence
 from typing import Any
 
 from agent.core.types import (
     AfterReasoningCtx,
     AfterTurnCtx,
-    MemoryItem,
     OutboundMessage,
     TurnCommittedEvent,
 )
@@ -16,9 +14,8 @@ from agent.lifecycle.phase import (
     PhaseModuleRunner,
     collect_prefixed_slots,
 )
-from agent.pipeline.phases.after_reasoning import AfterReasoningPhase
 from channels.telegram.adapter import TelegramAdapter
-from uuid import uuid4, UUID
+from uuid import UUID
 
 
 # `AfterTurnPhase` 是用户收到回复之前的最后一个 Pipeline Phase：它广播“这一轮已经形成结果”的事件，运行回合后插件和遥测观察者，然后调用 TelegramAdapter 发送 `OutboundMessage`。
@@ -27,7 +24,7 @@ class AfterTurnPhase:
         self,
         event_bus: EventBus,
         telegram_adapter: TelegramAdapter,
-        plugin_modules: Sequence[object] | None = None,
+        plugin_modules: Sequence[Any] | None = None,
     ) -> None:
         self.event_bus = event_bus
         self.telegram_adapter = telegram_adapter
@@ -41,16 +38,15 @@ class AfterTurnPhase:
         inbound_content: str = "",
     ) -> None:
         """Execute post-turn operations."""
-        # Generate turn ID
-        turn_id = str(uuid4())
-
         # Create and emit TurnCommittedEvent
         event = TurnCommittedEvent(
-            turn_id=turn_id,
+            turn_id=ctx.turn_id,
             user_id=user_id,
             inbound_content=inbound_content,
             outbound_message=ctx.outbound_message,
             new_memory_ids=new_memory_ids,
+            session_key=ctx.session_key,
+            trace_id=ctx.trace_id,
         )
 
         turn_ctx = AfterTurnCtx(
@@ -62,6 +58,8 @@ class AfterTurnPhase:
             thinking=ctx.thinking,
             will_dispatch=self.telegram_adapter is not None,
             extra_metadata=dict(ctx.outbound_metadata),
+            turn_id=ctx.turn_id,
+            trace_id=ctx.trace_id,
         )
         plugin_runner = PhaseModuleRunner(
             self.plugin_modules,

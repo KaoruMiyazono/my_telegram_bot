@@ -1,0 +1,15 @@
+{
+  "turn_id": "<turn_id>",
+  "session_key": "telegram:1001:42",
+  "trace_id": "<trace_id>",
+  "phases": ["before_turn", "before_reasoning", "reasoning", "after_reasoning", "after_turn"],
+  "tools_visible": ["web_search", "web_fetch"],
+  "tools_called": ["web_search", "web_fetch"],
+  "context_tokens_before": 2,
+  "context_tokens_after": 2,
+  "finish_reason": "stop",
+  "latency_ms": "<latency_ms>",
+  "status": "completed",
+  "error_type": "",
+  "retrieval": {"mode": "", "count": 0}
+}

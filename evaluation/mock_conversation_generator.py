@@ -145,8 +145,12 @@ class MockConversationGenerator:
             },
         ]
 
-    def save_to_file(self) -> str:
+    def save_to_file(self, limit: int | None = None) -> str:
+        """Write generated conversations, optionally preserving legacy limits."""
+
         conversations = self.generate()
+        if limit is not None:
+            conversations = conversations[: max(0, int(limit))]
         with open(self.output_path, "w", encoding="utf-8") as f:
             for conv in conversations:
                 f.write(json.dumps(conv, ensure_ascii=False) + "\n")

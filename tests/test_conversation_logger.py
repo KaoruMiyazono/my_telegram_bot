@@ -2,6 +2,7 @@
 测试对话日志记录器和模拟对话生成器
 """
 import asyncio
+import tempfile
 import sys
 from pathlib import Path
 
@@ -12,13 +13,13 @@ from evaluation.conversation_logger import ConversationLogger
 from evaluation.mock_conversation_generator import MockConversationGenerator
 
 
-async def test_mock_generator():
+async def test_mock_generator(tmp_path: Path):
     """测试模拟对话生成器"""
     print("=" * 50)
     print("测试 1: 模拟对话生成器")
     print("=" * 50)
 
-    generator = MockConversationGenerator()
+    generator = MockConversationGenerator(str(tmp_path / "mock_conversations.jsonl"))
     conversations = generator.generate()
 
     print(f"生成了 {len(conversations)} 条模拟对话")
@@ -40,14 +41,14 @@ async def test_mock_generator():
     print(f"从文件加载了 {len(loaded)} 条对话")
 
 
-async def test_conversation_logger():
+async def test_conversation_logger(tmp_path: Path):
     """测试对话日志记录器"""
     print("\n" + "=" * 50)
     print("测试 2: 对话日志记录器")
     print("=" * 50)
 
     # 清理旧数据
-    logger = ConversationLogger(log_dir="./data/evaluation")
+    logger = ConversationLogger(log_dir=str(tmp_path / "evaluation"))
     logger.clear_raw_conversations()
 
     # 启动 logger
@@ -104,14 +105,14 @@ async def test_conversation_logger():
         print(f"  回复: {conv['outbound_message']['content'][:40]}...")
 
 
-async def test_full_workflow():
+async def test_full_workflow(tmp_path: Path):
     """测试完整工作流：生成 → 记录 → 加载"""
     print("\n" + "=" * 50)
     print("测试 3: 完整工作流")
     print("=" * 50)
 
     # 1. 生成模拟数据
-    generator = MockConversationGenerator()
+    generator = MockConversationGenerator(str(tmp_path / "mock_conversations.jsonl"))
     generator.save_to_file(4)
     print("1. 生成了 4 条模拟对话")
 
@@ -120,7 +121,7 @@ async def test_full_workflow():
     print(f"2. 从文件加载了 {len(mock_convs)} 条对话")
 
     # 3. 测试 logger
-    logger = ConversationLogger()
+    logger = ConversationLogger(log_dir=str(tmp_path / "evaluation"))
     logger.clear_raw_conversations()
     await logger.start()
 
@@ -159,9 +160,11 @@ async def main():
     """运行所有测试"""
     print("开始测试对话日志系统...\n")
 
-    await test_mock_generator()
-    await test_conversation_logger()
-    await test_full_workflow()
+    with tempfile.TemporaryDirectory() as temp_dir:
+        root = Path(temp_dir)
+        await test_mock_generator(root / "generator")
+        await test_conversation_logger(root / "logger")
+        await test_full_workflow(root / "workflow")
 
     print("\n" + "=" * 50)
     print("所有测试完成！")
