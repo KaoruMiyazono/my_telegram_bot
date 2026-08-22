@@ -37,16 +37,20 @@ def register_web_tools(
     registry.register(
         build_web_search_tool(search_client),
         risk="read-only",
-        always_on=True,
+        always_on=False,
         search_hint="联网搜索 最新消息 新闻 价格 当前信息",
         source_type="builtin",
         source_name="web",
+        tier="core",
+        preloadable=True,
     )
     registry.register(
         build_web_fetch_tool(fetch_client),
         risk="read-only",
-        always_on=True,
+        always_on=False,
         search_hint="打开网页 读取链接 核实来源",
         source_type="builtin",
         source_name="web",
+        tier="core",
+        preloadable=True,
     )

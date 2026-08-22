@@ -17,6 +17,9 @@ class Settings(BaseSettings):
     LLM_MODEL: str = "deepseek-chat"
     LLM_CONTEXT_WINDOW: int = 64_000
     LLM_OUTPUT_RESERVE: int = 4_096
+    TOOL_INITIAL_MAX_SCHEMAS: int = 8
+    TOOL_INITIAL_SCHEMA_CHAR_BUDGET: int = 12_000
+    TOOL_SESSION_LRU_SIZE: int = 4
 
     # Aliyun Embedding
     ALIYUN_DASHSCOPE_API_KEY: str

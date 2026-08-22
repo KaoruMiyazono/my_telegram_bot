@@ -39,9 +39,17 @@ def register_memory_tools(registry: ToolRegistry, memory_engine: Any) -> None:
                 handler=handler,
             ),
             risk="read-write" if name == "memorize" else "read-only",
-            always_on=True,
+            always_on=False,
+            search_hint={
+                "memorize": "记住 保存 以后提醒 偏好 规则",
+                "recall_memory": "回忆 记忆 我的 喜欢 偏好 职业 技术栈 推荐",
+                "fetch_messages": "source_ref 原始消息 原文 证据 回溯",
+                "search_messages": "以前 之前 历史 对话 原话 聊过 变化",
+            }.get(name),
             source_type="builtin",
             source_name="memory",
+            tier="core",
+            preloadable=True,
         )
 
 

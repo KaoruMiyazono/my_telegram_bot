@@ -15,6 +15,7 @@ ToolRuntimeStatus = Literal["success", "denied", "error"]
 ToolRuntimeErrorCode = Literal[
     "argument_parse",
     "tool_lookup",
+    "tool_locked",
     "input_validation",
     "policy_check",
     "tool_invoke",
@@ -127,6 +128,7 @@ class ToolRuntime:
         tool_batch_index: int = 0,
         turn_id: str = "",
         trace_id: str = "",
+        allowed_tool_names: frozenset[str] | None = None,
     ) -> ToolRuntimeResult:
         started = time.monotonic()
 
@@ -156,6 +158,21 @@ class ToolRuntime:
                 status="error",
                 error_code="tool_lookup",
                 message=f"Unknown tool: {tool_name}",
+                retryable=False,
+            ))
+        if allowed_tool_names is not None and tool_name not in allowed_tool_names:
+            return finish(self._error(
+                started=started,
+                tool_name=tool_name,
+                call_id=call_id,
+                arguments=arguments,
+                final_arguments=arguments,
+                status="denied",
+                error_code="tool_locked",
+                message=(
+                    f"工具 '{tool_name}' 已注册但当前Turn尚未解锁。"
+                    f"请先调用 tool_search(query='select:{tool_name}') 搜索并解锁。"
+                ),
                 retryable=False,
             ))
         #  看看参数和function定义是否冲突

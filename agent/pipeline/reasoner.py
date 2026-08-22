@@ -175,6 +175,7 @@ class Reasoner:
         call_id: str = "",
         tool_batch: tuple[dict, ...] = (),
         tool_batch_index: int = 0,
+        enforce_visibility: bool = True,
     ) -> str:
         """Execute a tool call. 工具结果以 JSON 字符串返回给 LLM。"""
         session_key, channel, chat_id = _tool_context(ctx)
@@ -203,7 +204,18 @@ class Reasoner:
             tool_batch_index=tool_batch_index,
             turn_id=ctx.turn_id,
             trace_id=ctx.trace_id,
+            allowed_tool_names=(
+                frozenset(
+                    str(schema.get("function", {}).get("name", ""))
+                    for schema in ctx.tools
+                    if schema.get("function", {}).get("name")
+                )
+                if enforce_visibility
+                else None
+            ),
         )
+        if runtime_result.ok and self._tool_registry is not None:
+            self._tool_registry.remember_tool_use(session_key, tool_name)
         result = runtime_result.to_json()
         await self._event_bus.observe(
             AfterToolResultCtx(
@@ -502,7 +514,9 @@ class Reasoner:
                 ],
             }
         )
-        result = await self._execute_tool("fetch_messages", args, ctx)
+        result = await self._execute_tool(
+            "fetch_messages", args, ctx, enforce_visibility=False
+        )
         tool_calls[-1]["result"] = result
         _annotate_tool_call_from_runtime(tool_calls[-1], result)
         messages.append(
@@ -570,7 +584,9 @@ class Reasoner:
                 ],
             }
         )
-        result = await self._execute_tool("recall_memory", args, ctx)
+        result = await self._execute_tool(
+            "recall_memory", args, ctx, enforce_visibility=False
+        )
         tool_calls[-1]["result"] = result
         _annotate_tool_call_from_runtime(tool_calls[-1], result)
         messages.append(
@@ -638,7 +654,9 @@ class Reasoner:
                 ],
             }
         )
-        result = await self._execute_tool("search_messages", args, ctx)
+        result = await self._execute_tool(
+            "search_messages", args, ctx, enforce_visibility=False
+        )
         tool_calls[-1]["result"] = result
         _annotate_tool_call_from_runtime(tool_calls[-1], result)
         messages.append(

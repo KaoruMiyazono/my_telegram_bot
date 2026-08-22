@@ -327,7 +327,15 @@ class BeforeReasoningPhase:
 
     async def build_ctx(self, turn_ctx: BeforeTurnCtx) -> BeforeReasoningCtx:
         """Build BeforeReasoningCtx for LLM reasoning."""
-        tools = self.tool_registry.get_schemas() if self.tool_registry is not None else _TOOLS
+        content = turn_ctx.content or turn_ctx.inbound_message.content
+        session_key = turn_ctx.session_key or f"{turn_ctx.session.user_id}:{turn_ctx.session.chat_id}"
+        channel = turn_ctx.channel or "telegram"
+        chat_id = turn_ctx.chat_id or str(turn_ctx.session.chat_id)
+        tools = (
+            self.tool_registry.get_initial_schemas(query=content, session_key=session_key)
+            if self.tool_registry is not None
+            else _TOOLS
+        )
         plugin_runner = PhaseModuleRunner(
             self.plugin_modules,
             phase_name="before_reasoning",
@@ -340,11 +348,10 @@ class BeforeReasoningPhase:
             },
         )
         frame = await plugin_runner.run_ready(frame)
+        exported_tools = frame.slots.get("reasoning:tools")
+        if isinstance(exported_tools, list):
+            tools = exported_tools
         #  补充内容  这里的content是用户的输入消息，session_key是用户和聊天的唯一标识，channel是聊天平台，chat_id是聊天ID
-        content = turn_ctx.content or turn_ctx.inbound_message.content
-        session_key = turn_ctx.session_key or f"{turn_ctx.session.user_id}:{turn_ctx.session.chat_id}"
-        channel = turn_ctx.channel or "telegram"
-        chat_id = turn_ctx.chat_id or str(turn_ctx.session.chat_id)
         ctx = BeforeReasoningCtx(
             session=turn_ctx.session,
             memories=turn_ctx.retrieved_memories,

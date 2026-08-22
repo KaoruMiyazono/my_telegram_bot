@@ -12,7 +12,7 @@ from agent.pipeline.phases.before_turn import BeforeTurnPhase
 from agent.pipeline.reasoner import Reasoner
 from agent.plugins import PluginManager
 from agent.tool_hooks import ToolExecutor
-from agent.tools import ToolRegistry
+from agent.tools import ToolRegistry, register_tool_search
 from agent.tools.memory import register_memory_tools
 from agent.tools.web import register_web_tools
 from channels.telegram.adapter import TelegramAdapter
@@ -59,7 +59,11 @@ async def main() -> None:
     )
     #  保证是单例的 并且初始化执行对象和注册对象
     event_bus = EventBus.get_instance()
-    tool_registry = ToolRegistry()
+    tool_registry = ToolRegistry(
+        initial_max_tools=settings.TOOL_INITIAL_MAX_SCHEMAS,
+        initial_schema_char_budget=settings.TOOL_INITIAL_SCHEMA_CHAR_BUDGET,
+        session_lru_size=settings.TOOL_SESSION_LRU_SIZE,
+    )
     tool_executor = ToolExecutor()
 
     # 3. Initialize conversation logger (for evaluation)
@@ -78,6 +82,8 @@ async def main() -> None:
     register_memory_tools(tool_registry, memory_runtime.engine)
     # 注册只读联网搜索和网页抓取工具
     register_web_tools(tool_registry)
+    # Meta工具始终可见；其搜索结果只在当前Turn解锁目标Schema。
+    register_tool_search(tool_registry)
 
     # 5. Initialize plugin runtime after built-ins, so plugin tools can override by name. 初始化插件管理
     plugin_manager = PluginManager(
