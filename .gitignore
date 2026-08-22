@@ -6,6 +6,18 @@ __pycache__/
 *.py[cod]
 *$py.class
 *.so
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
 
 # Virtual environment
 venv/
@@ -23,6 +35,11 @@ data/*
 data/evaluation/*
 !data/evaluation/retrieval_strategy_lab.jsonl
 *.db
+*.db-*
+*.sqlite
+*.sqlite-*
+*.sqlite3
+*.sqlite3-*
 
 # OS
 .DS_Store
@@ -30,6 +47,11 @@ Thumbs.db
 
 # Logs
 *.log
+*.out
 
 # Runtime
 .bot.pid
+*.pid
+*.tmp
+*.temp
+*.bak
