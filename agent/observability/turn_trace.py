@@ -74,6 +74,12 @@ class TurnTrace:
         self.error_type = type(error).__name__
         self.latency_ms = max(0, int((time.monotonic() - self.started_monotonic) * 1000))
 
+    def cancel(self) -> None:
+        self.status = "cancelled"
+        self.finish_reason = "cancelled"
+        self.error_type = "CancelledError"
+        self.latency_ms = max(0, int((time.monotonic() - self.started_monotonic) * 1000))
+
     def to_dict(self) -> dict[str, Any]:
         """Return the production trace. No message/tool body is included."""
 

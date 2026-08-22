@@ -25,10 +25,12 @@ class AfterTurnPhase:
         event_bus: EventBus,
         telegram_adapter: TelegramAdapter,
         plugin_modules: Sequence[Any] | None = None,
+        deferred_dispatch: bool = False,
     ) -> None:
         self.event_bus = event_bus
         self.telegram_adapter = telegram_adapter
         self.plugin_modules = list(plugin_modules or [])
+        self.deferred_dispatch = deferred_dispatch
 
     async def execute(
         self,
@@ -56,7 +58,9 @@ class AfterTurnPhase:
             reply=ctx.outbound_message.content,
             tools_used=ctx.tools_used,
             thinking=ctx.thinking,
-            will_dispatch=self.telegram_adapter is not None,
+            will_dispatch=(
+                self.telegram_adapter is not None or self.deferred_dispatch
+            ),
             extra_metadata=dict(ctx.outbound_metadata),
             turn_id=ctx.turn_id,
             trace_id=ctx.trace_id,

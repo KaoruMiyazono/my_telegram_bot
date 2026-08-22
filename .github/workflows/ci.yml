@@ -37,6 +37,11 @@ jobs:
             agent/pipeline/consolidation_worker.py \
             agent/pipeline/passive_turn.py \
             agent/pipeline/reasoner.py \
+            agent/core/envelope.py \
+            agent/core/message_bus.py \
+            agent/core/session_lane.py \
+            agent/runtime/turn_runtime.py \
+            agent/runtime/cancellation.py \
             agent/tools/web_search.py \
             agent/tools/web_fetch.py \
             agent/tools/web.py \

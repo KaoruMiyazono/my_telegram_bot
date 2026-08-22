@@ -2,6 +2,9 @@
 
 这张图冻结 M0 时刻的生产启动链。箭头表示“创建者把依赖注入给使用者”，不是运行时事件流。
 
+> 这是M0历史基线。M1后的生产消息入口已经改为MessageBus和Session Lane，当前结构见
+> [`m1_async_runtime.md`](m1_async_runtime.md)。
+
 ```mermaid
 flowchart TD
     Main[main.py] --> DB[init_db]

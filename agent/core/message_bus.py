@@ -1,117 +1,105 @@
-"""
-消息总线：agent 与各 channel 之间的异步消息传递
-"""
+"""Durable asynchronous transport between channels and TurnRuntime."""
 
 from __future__ import annotations
 
 import asyncio
+import itertools
 import logging
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
-from typing import Self
+
+from agent.core.envelope import MessageEnvelope
+from persistence.runtime_message_store import RuntimeMessageStore
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass
-class InboundMessage:
-    """入站消息：从 Channel 到 Agent"""
-    channel: str
-    user_id: str
-    chat_id: str
-    content: str
-    message_id: int | None = None
-    username: str | None = None
-    metadata: dict = None
-
-    def __post_init__(self) -> None:
-        if self.metadata is None:
-            self.metadata = {}
-
-
-@dataclass
-class OutboundMessage:
-    """出站消息：从 Agent 到 Channel"""
-    channel: str
-    chat_id: str
-    content: str
-    parse_mode: str | None = None  # "Markdown", "HTML", or None
-    reply_to_message_id: int | None = None
+EnvelopeHandler = Callable[[MessageEnvelope], Awaitable[None]]
 
 
 class MessageBus:
-    """agent 与各 channel 之间的异步消息总线"""
+    """Priority queues with durable admission and channel-specific delivery."""
 
-    def __init__(self) -> None:
-        self._inbound: asyncio.Queue[InboundMessage] = asyncio.Queue()
-        self._outbound: asyncio.Queue[OutboundMessage] = asyncio.Queue()
-        self._subscribers: dict[
-            str, list[Callable[[OutboundMessage], Awaitable[None]]]
-        ] = {}
-        self._running = False
+    def __init__(self, store: RuntimeMessageStore | None = None) -> None:
+        self.store = store or RuntimeMessageStore()
+        self._inbound: asyncio.PriorityQueue[tuple[int, int, MessageEnvelope]] = asyncio.PriorityQueue()
+        self._outbound: asyncio.PriorityQueue[tuple[int, int, MessageEnvelope]] = asyncio.PriorityQueue()
+        self._sequence = itertools.count()
+        self._subscribers: dict[str, list[EnvelopeHandler]] = {}
         self._dispatch_task: asyncio.Task[None] | None = None
+        self._stopping = False
 
-    async def publish_inbound(self, msg: InboundMessage) -> None:
-        """channel → agent"""
-        await self._inbound.put(msg)
+    async def publish_inbound(self, envelope: MessageEnvelope) -> bool:
+        if envelope.direction != "inbound":
+            raise ValueError("publish_inbound requires an inbound envelope")
+        if not self.store.admit(envelope):
+            return False
+        await self._put(self._inbound, envelope)
+        return True
 
-    async def consume_inbound(self) -> InboundMessage:
-        """阻塞直到有消息可消费"""
-        return await self._inbound.get()
+    async def publish_outbound(self, envelope: MessageEnvelope) -> bool:
+        if envelope.direction != "outbound":
+            raise ValueError("publish_outbound requires an outbound envelope")
+        if not self.store.admit(envelope):
+            return False
+        await self._put(self._outbound, envelope)
+        return True
 
-    async def publish_outbound(self, msg: OutboundMessage) -> None:
-        """agent → channel"""
-        await self._outbound.put(msg)
+    async def consume_inbound(self) -> MessageEnvelope:
+        _, _, envelope = await self._inbound.get()
+        return envelope
 
-    def subscribe_outbound(
-        self,
-        channel: str,
-        callback: Callable[[OutboundMessage], Awaitable[None]],
-    ) -> None:
-        """订阅某 channel 的出站消息"""
+    def subscribe_outbound(self, channel: str, callback: EnvelopeHandler) -> None:
         self._subscribers.setdefault(channel, []).append(callback)
 
-    async def dispatch_outbound(self) -> None:
-        """后台任务：将出站消息分发给对应 channel 的订阅者"""
-        self._running = True
-        while self._running:
-            try:
-                msg = await asyncio.wait_for(self._outbound.get(), timeout=1.0)
-                for cb in self._subscribers.get(msg.channel, []):
-                    try:
-                        await cb(msg)
-                    except Exception as first_err:
-                        logger.warning(
-                            f"分发消息到 {msg.channel} 首次失败，2s 后重试: {first_err}"
-                        )
-                        await asyncio.sleep(2)
-                        try:
-                            await cb(msg)
-                        except Exception as second_err:
-                            logger.error(
-                                f"分发消息到 {msg.channel} 重试仍失败: {second_err}"
-                            )
-            except asyncio.TimeoutError:
-                continue
+    async def recover(self) -> int:
+        envelopes = self.store.recover_inbound()
+        for envelope in envelopes:
+            await self._put(self._inbound, envelope)
+        return len(envelopes)
 
-    def start_dispatch(self) -> asyncio.Task[None]:
-        """启动出站消息分发任务"""
+    async def start(self) -> None:
+        self._stopping = False
+        await self.recover()
         if self._dispatch_task is None or self._dispatch_task.done():
             self._dispatch_task = asyncio.create_task(
-                self.dispatch_outbound(),
-                name="message_bus_dispatch",
+                self._dispatch_outbound(), name="message-bus-outbound"
             )
-        return self._dispatch_task
 
     async def stop(self) -> None:
-        """停止消息总线"""
-        self._running = False
-        if self._dispatch_task:
+        self._stopping = True
+        if self._dispatch_task is not None:
             self._dispatch_task.cancel()
             try:
                 await self._dispatch_task
             except asyncio.CancelledError:
                 pass
+            self._dispatch_task = None
+
+    async def _put(
+        self,
+        queue: asyncio.PriorityQueue[tuple[int, int, MessageEnvelope]],
+        envelope: MessageEnvelope,
+    ) -> None:
+        await queue.put((int(envelope.priority), next(self._sequence), envelope))
+
+    async def _dispatch_outbound(self) -> None:
+        while not self._stopping:
+            _, _, envelope = await self._outbound.get()
+            handlers = self._subscribers.get(envelope.channel, [])
+            if not handlers:
+                logger.error("No outbound subscriber for channel=%s", envelope.channel)
+                self.store.mark(envelope.message_id, "failed", increment_attempts=True)
+                continue
+            self.store.mark(envelope.message_id, "running", increment_attempts=True)
+            try:
+                for handler in handlers:
+                    await handler(envelope)
+            except asyncio.CancelledError:
+                self.store.mark(envelope.message_id, "queued")
+                raise
+            except Exception:
+                logger.exception("Outbound delivery failed message_id=%s", envelope.message_id)
+                self.store.mark(envelope.message_id, "failed")
+            else:
+                self.store.mark(envelope.message_id, "done")
 
     @property
     def inbound_size(self) -> int:

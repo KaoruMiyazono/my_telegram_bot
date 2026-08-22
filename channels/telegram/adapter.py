@@ -14,7 +14,9 @@ from telegram.ext import (
 
 if TYPE_CHECKING:
     from agent.pipeline.passive_turn import PassiveTurnPipeline
+    from agent.runtime.turn_runtime import TurnRuntime
 
+from agent.core.envelope import MessageEnvelope, MessagePriority, envelope_from_inbound
 from agent.core.types import InboundMessage
 
 logger = logging.getLogger(__name__)
@@ -26,12 +28,14 @@ class TelegramAdapter:
     def __init__(
         self,
         token: str,
-        pipeline: "PassiveTurnPipeline",
+        pipeline: "PassiveTurnPipeline | None" = None,
         proxy: str | None = None,
+        runtime: "TurnRuntime | None" = None,
     ) -> None:
         self.token = token
         self.pipeline = pipeline
         self.proxy = proxy
+        self.runtime = runtime
         self.application: Application | None = None
 
     async def _handle_message(
@@ -60,13 +64,27 @@ class TelegramAdapter:
                 f"Received message from {inbound.user_id}: {inbound.content[:50]}"
             )
 
-            # Execute pipeline
-            outbound = await self.pipeline.execute(inbound)
-
-            # Send response (already done by pipeline's after_turn)
-            logger.info(
-                f"Sent response to {outbound.chat_id}: {outbound.content[:50]}"
-            )
+            if self.runtime is not None:
+                inbound = InboundMessage(
+                    user_id=inbound.user_id,
+                    chat_id=inbound.chat_id,
+                    content=inbound.content,
+                    metadata={**inbound.metadata, "preempt_active": True},
+                    channel=inbound.channel,
+                )
+                accepted = await self.runtime.bus.publish_inbound(
+                    envelope_from_inbound(
+                        inbound,
+                        client_message_id=f"telegram:{update.update_id}",
+                    )
+                )
+                if not accepted:
+                    logger.info("Duplicate Telegram update ignored update_id=%s", update.update_id)
+            elif self.pipeline is not None:
+                outbound = await self.pipeline.execute(inbound)
+                logger.info("Sent response to %s: %.50s", outbound.chat_id, outbound.content)
+            else:
+                raise RuntimeError("TelegramAdapter requires pipeline or runtime")
 
         except Exception as e:
             logger.error(f"Error handling message: {e}", exc_info=True)
@@ -81,6 +99,39 @@ class TelegramAdapter:
             await update.effective_message.reply_text(
                 "你好！我是一个 AI 助手，有什么我可以帮你的吗？"
             )
+
+    async def _stop_command(
+        self,
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE,
+    ) -> None:
+        """Put a high-priority interrupt onto the runtime control path."""
+        if (
+            self.runtime is None
+            or not update.effective_message
+            or not update.effective_user
+            or not update.effective_chat
+        ):
+            if update.effective_message:
+                await update.effective_message.reply_text("当前运行模式不支持中断。")
+            return
+        inbound = InboundMessage(
+            user_id=update.effective_user.id,
+            chat_id=update.effective_chat.id,
+            content="/stop",
+            metadata={"update_id": update.update_id},
+            channel="telegram",
+        )
+        await self.runtime.bus.publish_inbound(
+            envelope_from_inbound(
+                inbound,
+                client_message_id=f"telegram:{update.update_id}",
+                priority=MessagePriority.INTERRUPT,
+            )
+        )
+
+    async def send_envelope(self, envelope: MessageEnvelope) -> None:
+        await self.send(envelope.as_outbound())
 
     async def send(self, message) -> None:
         """Send message via Telegram (called by AfterTurnPhase). Retries on network errors."""
@@ -151,6 +202,7 @@ class TelegramAdapter:
 
         # Register handlers
         self.application.add_handler(CommandHandler("start", self._start_command))
+        self.application.add_handler(CommandHandler("stop", self._stop_command))
         self.application.add_handler(
             MessageHandler(filters.TEXT & ~filters.COMMAND, self._handle_message)
         )

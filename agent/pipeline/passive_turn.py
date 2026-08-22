@@ -73,6 +73,10 @@ class PassiveTurnPipeline:
             outbound = await self._execute_traced(inbound_message, trace)
             logger.info("Turn trace: %s", trace.to_dict())
             return outbound
+        except asyncio.CancelledError:
+            trace.cancel()
+            logger.info("Turn trace cancelled: %s", trace.to_dict())
+            raise
         except BaseException as error:
             trace.fail(error)
             logger.warning("Turn trace failed: %s", trace.to_dict())

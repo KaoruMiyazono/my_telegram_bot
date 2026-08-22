@@ -67,6 +67,26 @@ CREATE TABLE IF NOT EXISTS conversation_sessions (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (user_id, chat_id)
 );
+
+-- Durable async runtime queue and idempotency ledger
+CREATE TABLE IF NOT EXISTS runtime_messages (
+    id TEXT PRIMARY KEY,
+    session_key TEXT NOT NULL,
+    direction TEXT NOT NULL CHECK(direction IN ('inbound', 'outbound')),
+    status TEXT NOT NULL CHECK(status IN ('queued', 'running', 'done', 'failed', 'cancelled')),
+    dedupe_key TEXT UNIQUE,
+    payload_json TEXT NOT NULL,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    leased_until TIMESTAMP,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_runtime_messages_session
+ON runtime_messages(session_key, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_runtime_messages_recovery
+ON runtime_messages(direction, status, created_at);
 """
 
 

@@ -49,6 +49,12 @@ poetry run python eval/rag_layer_smoke.py
 
 默认 pytest 包含离线单元测试、Pipeline 集成测试和五类 Golden Trace，不会运行需要真实 API 的手工 E2E 脚本。M0 的启动依赖与数据合同见 `docs/architecture/main_startup_dependency.md` 和 `docs/contracts/core_models.md`。
 
+生产 Telegram 消息现在会先进入持久化 `MessageBus`，再按
+`channel:chat_id:user_id` 进入 Session Lane。同一个 Session 严格串行，不同
+Session 并发执行；`/stop` 可以取消当前 LLM/工具任务，新消息也可以抢占旧的
+长任务。消息状态记录在 `runtime_messages`，Telegram `update_id` 作为幂等键，
+避免进程重启后重复消费已经提交的消息。
+
 如果当前网络不能直接访问 Telegram，可在 `.env` 中配置 HTTP 或 SOCKS 代理：
 
 ```dotenv

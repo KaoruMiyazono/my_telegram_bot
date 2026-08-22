@@ -2,6 +2,10 @@
   "include": [
     "agent/core/ids.py",
     "agent/core/types.py",
+    "agent/core/envelope.py",
+    "agent/core/message_bus.py",
+    "agent/core/session_lane.py",
+    "agent/runtime",
     "agent/observability",
     "agent/pipeline/passive_turn.py",
     "agent/pipeline/phases",

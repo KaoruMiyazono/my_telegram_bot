@@ -3,6 +3,7 @@ import logging
 from pathlib import Path
 
 from agent.core.event_bus import EventBus
+from agent.core.message_bus import MessageBus
 from agent.pipeline.passive_turn import PassiveTurnPipeline
 from agent.pipeline.phases.after_reasoning import AfterReasoningPhase
 from agent.pipeline.phases.after_turn import AfterTurnPhase
@@ -22,6 +23,8 @@ from memory.bootstrap import build_memory_runtime
 from memory.store import MemoryStore
 from persistence.database import init_db
 from persistence.session_store import get_session_store
+from persistence.runtime_message_store import RuntimeMessageStore
+from agent.runtime.turn_runtime import TurnRuntime
 
 # Configure logging
 logging.basicConfig(
@@ -116,7 +119,8 @@ async def main() -> None:
         event_bus,
         None,
         plugin_modules=plugin_manager.after_turn_modules,
-    )  # adapter set later
+        deferred_dispatch=True,
+    )  # TurnRuntime publishes the final reply through MessageBus outbound.
 
     # 7. Consolidation worker（窗口期 LLM 提取长期记忆）
     from agent.pipeline.consolidation_worker import ConsolidationWorker
@@ -141,28 +145,33 @@ async def main() -> None:
         memory_runtime=memory_runtime,
     )
 
-    # 9. Create Telegram adapter
+    # 9. Create asynchronous runtime and Telegram adapter.
+    message_bus = MessageBus(RuntimeMessageStore())
+    turn_runtime = TurnRuntime(bus=message_bus, pipeline=pipeline)
     adapter = TelegramAdapter(
         token=settings.TG_BOT_TOKEN,
-        pipeline=pipeline,
         proxy=settings.HTTP_PROXY,
+        runtime=turn_runtime,
     )
-    after_turn.telegram_adapter = adapter  # Inject adapter
-
-    # 10. Start bot
-    logger.info("Starting Telegram bot...")
-    await adapter.start()
-
-    # Get bot info after starting
-    me = await adapter.application.bot.get_me()
-    logger.info(f"Bot started as @{me.username}")
-
-    # Keep running
+    message_bus.subscribe_outbound("telegram", adapter.send_envelope)
     try:
+        await turn_runtime.start()
+
+        # 10. Start bot
+        logger.info("Starting Telegram bot...")
+        await adapter.start()
+
+        # Get bot info after starting
+        me = await adapter.application.bot.get_me()
+        logger.info(f"Bot started as @{me.username}")
+
+        # Keep running
         await asyncio.Event().wait()
     except asyncio.CancelledError:
         pass
     finally:
+        await adapter.stop()
+        await turn_runtime.stop()
         # Stop conversation logger
         await plugin_manager.terminate_all()
         await conversation_logger.stop()
