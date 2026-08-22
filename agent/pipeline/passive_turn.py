@@ -137,6 +137,13 @@ class PassiveTurnPipeline:
         result.trace_id = trace.identity.trace_id
         self.last_reasoner_result = result
         trace.context_tokens_after = estimate_tokens(reasoning_ctx.messages)
+        if result.context_trace:
+            final_context = result.context_trace[-1]
+            trace.context_tokens_after = int(final_context.get("tokens_after") or 0)
+            trace.context_degradations = [
+                item for item in result.context_trace
+                if item.get("level") != "L0"
+            ]
 
         # Phase 4: AfterReasoning - create outbound message and persist
         trace.mark_phase("after_reasoning")

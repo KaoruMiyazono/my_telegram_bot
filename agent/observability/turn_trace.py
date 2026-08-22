@@ -53,6 +53,7 @@ class TurnTrace:
     error_type: str = ""
     retrieval_mode: str = ""
     retrieved_count: int = 0
+    context_degradations: list[dict[str, Any]] = field(default_factory=list)
 
     def mark_phase(self, phase: str) -> None:
         if phase not in self.phases:
@@ -83,7 +84,7 @@ class TurnTrace:
     def to_dict(self) -> dict[str, Any]:
         """Return the production trace. No message/tool body is included."""
 
-        return {
+        payload = {
             "turn_id": self.identity.turn_id,
             "session_key": self.identity.session_key,
             "trace_id": self.identity.trace_id,
@@ -101,6 +102,9 @@ class TurnTrace:
                 "count": self.retrieved_count,
             },
         }
+        if self.context_degradations:
+            payload["context_degradations"] = list(self.context_degradations)
+        return payload
 
     def golden_snapshot(self) -> dict[str, Any]:
         """Normalize unstable IDs and timing for version-controlled regression data."""

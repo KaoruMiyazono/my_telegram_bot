@@ -475,15 +475,24 @@ class BeforeReasoningPhase:
             system_sections_bottom=ctx.system_sections_bottom,
         )
         system_prompt = built.system_prompt
+        system_sections = list(built.system_sections)
         if ctx.extra_hints:
-            system_prompt += "\n\n# Extra Hints\n" + "\n".join(ctx.extra_hints)
+            extra_hints = "# Extra Hints\n" + "\n".join(ctx.extra_hints)
+            system_prompt += "\n\n" + extra_hints
+            system_sections.append(
+                PromptSectionRender(
+                    name="extra_hints",
+                    content=extra_hints,
+                    is_static=False,
+                )
+            )
 
         messages: list[dict[str, Any]] = [{"role": "system", "content": system_prompt}]
         messages.extend(ctx.history)
         messages.append({"role": "user", "content": ctx.content})
         return {
             "messages": messages,
-            "system_sections": built.system_sections,
+            "system_sections": system_sections,
         }
 
 

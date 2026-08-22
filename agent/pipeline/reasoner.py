@@ -20,6 +20,12 @@ from agent.lifecycle.phase import (
     append_string_exports,
     collect_prefixed_slots,
 )
+from agent.runtime.context_budget import (
+    ContextBudget,
+    ContextBudgetConfig,
+    ContextBudgetExceeded,
+    ContextLevel,
+)
 from agent.tool_hooks.executor import ToolExecutor
 from agent.tools.registry import ToolRegistry
 from agent.tools.runtime import ToolRuntime, unwrap_tool_envelope
@@ -117,6 +123,7 @@ class Reasoner:
         event_bus: EventBus | None = None,
         before_step_modules: Sequence[object] | None = None,
         after_step_modules: Sequence[object] | None = None,
+        context_budget: ContextBudget | None = None,
     ) -> None:
         #  LLM client for reasoning and tool call orchestration
         self.client = AsyncOpenAI(
@@ -133,6 +140,12 @@ class Reasoner:
             executor=self._tool_executor,
         )
         self._event_bus = event_bus or EventBus.get_instance()
+        self._context_budget = context_budget or ContextBudget(
+            ContextBudgetConfig(
+                context_window=settings.LLM_CONTEXT_WINDOW,
+                output_reserve=settings.LLM_OUTPUT_RESERVE,
+            )
+        )
         self.set_step_modules(
             before_step=before_step_modules,
             after_step=after_step_modules,
@@ -230,6 +243,7 @@ class Reasoner:
         """Run a reasoning turn with potential tool calls."""
         messages = ctx.messages.copy()
         tool_calls: list[dict] = []
+        context_trace: list[dict[str, object]] = []
 
         for iteration in range(_MAX_LLM_ITERATIONS):
             step_ctx = await self._run_before_step(ctx, iteration, messages)
@@ -240,6 +254,7 @@ class Reasoner:
                     finish_reason="early_stop",
                     turn_id=ctx.turn_id,
                     trace_id=ctx.trace_id,
+                    context_trace=list(context_trace),
                 )
             if step_ctx.extra_hints:
                 messages.append(
@@ -248,17 +263,41 @@ class Reasoner:
                         "content": "# Step Hints\n" + "\n".join(step_ctx.extra_hints),
                     }
                 )
-            try:
-                response = await self.client.chat.completions.create(
-                    model=self.model,
-                    messages=messages,
+            minimum_level = ContextLevel.COMPLETE
+            while True:
+                projection = self._context_budget.project(
+                    messages,
                     tools=ctx.tools,
+                    prompt_sections=ctx.prompt_sections,
+                    source_ref=f"session:{ctx.session.user_id}:{ctx.session.chat_id}",
+                    min_level=minimum_level,
                 )
-            except Exception as e:
-                if iteration == 0:
-                    await asyncio.sleep(0.5)
-                    continue
-                raise
+                context_trace.append(projection.trace.to_dict())
+                try:
+                    request_kwargs = {
+                        "model": self.model,
+                        "messages": projection.messages,
+                        "tools": projection.tools,
+                    }
+                    if self._context_budget.config.output_reserve > 0:
+                        request_kwargs["max_tokens"] = self._context_budget.config.output_reserve
+                    response = await self.client.chat.completions.create(**request_kwargs)
+                    break
+                except Exception as error:
+                    if _is_context_length_error(error) and projection.trace.level < ContextLevel.MINIMAL_SAFE:
+                        minimum_level = ContextLevel(int(projection.trace.level) + 1)
+                        continue
+                    if _is_context_length_error(error):
+                        raise ContextBudgetExceeded(
+                            "Provider rejected the minimal safe context"
+                        ) from error
+                    if iteration == 0:
+                        await asyncio.sleep(0.5)
+                        response = None
+                        break
+                    raise
+            if response is None:
+                continue
 
             choice = response.choices[0]
             message = choice.message
@@ -401,6 +440,7 @@ class Reasoner:
                     finish_reason=choice.finish_reason or "stop",
                     turn_id=ctx.turn_id,
                     trace_id=ctx.trace_id,
+                    context_trace=list(context_trace),
                 )
 
         # Max iterations reached
@@ -410,6 +450,7 @@ class Reasoner:
             finish_reason="max_iterations",
             turn_id=ctx.turn_id,
             trace_id=ctx.trace_id,
+            context_trace=list(context_trace),
         )
 
     async def _run_evidence_fetch_guard(
@@ -1087,3 +1128,19 @@ def _estimate_message_tokens(messages: list[dict]) -> int:
         if isinstance(content, str):
             total_chars += len(content)
     return max(1, total_chars // 3)
+
+
+def _is_context_length_error(error: BaseException) -> bool:
+    """Recognize provider-specific context overflow messages."""
+
+    text = str(error).lower()
+    markers = (
+        "context length",
+        "context_length_exceeded",
+        "maximum context",
+        "max context",
+        "too many tokens",
+        "token limit",
+        "上下文长度",
+    )
+    return any(marker in text for marker in markers)

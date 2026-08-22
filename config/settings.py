@@ -15,6 +15,8 @@ class Settings(BaseSettings):
     DEEPSEEK_API_KEY: str
     DEEPSEEK_BASE_URL: str = "https://api.deepseek.com/v1"
     LLM_MODEL: str = "deepseek-chat"
+    LLM_CONTEXT_WINDOW: int = 64_000
+    LLM_OUTPUT_RESERVE: int = 4_096
 
     # Aliyun Embedding
     ALIYUN_DASHSCOPE_API_KEY: str

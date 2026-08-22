@@ -178,6 +178,7 @@ class ReasonerResult:
     finish_reason: str
     turn_id: str = ""
     trace_id: str = ""
+    context_trace: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass
