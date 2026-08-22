@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  rag-layer:
+    runs-on: ubuntu-latest
+    env:
+      TG_BOT_TOKEN: test_token
+      DEEPSEEK_API_KEY: test_key
+      ALIYUN_DASHSCOPE_API_KEY: test_key
+      DEEPSEEK_BASE_URL: https://api.test.com
+      LLM_MODEL: test-model
+      DATABASE_PATH: /tmp/telegram-bot-mvp-ci.db
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Poetry
+        run: python -m pip install poetry
+
+      - name: Install dependencies
+        run: poetry install --no-interaction --no-ansi
+
+      - name: Syntax check
+        run: |
+          poetry run python -m py_compile \
+            agent/pipeline/invalidation_worker.py \
+            agent/pipeline/consolidation_worker.py \
+            agent/pipeline/passive_turn.py \
+            agent/pipeline/reasoner.py \
+            memory/store.py \
+            persistence/session_store.py \
+            main.py
+
+      - name: RAG lifecycle smoke
+        run: |
+          poetry run python eval/rag_layer_smoke.py
+          poetry run python eval/replay_runner.py --mock --limit 5 --output /tmp/replay_mock_smoke.json
+
+      - name: Script tests
+        run: |
+          poetry run python tests/test_invalidation_worker.py
+          poetry run python tests/test_consolidation_worker.py
+          poetry run python tests/test_consolidation_integration.py
+          poetry run python tests/test_before_reasoning.py
+          poetry run python tests/test_session_store.py
+          poetry run python tests/test_memory_store.py
+          poetry run python tests/test_reasoner.py
+          poetry run python tests/test_replay_runner.py
+          poetry run python tests/test_longmemeval_conversion.py
+          poetry run python tests/test_pipeline_integration.py

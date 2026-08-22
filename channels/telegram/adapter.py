@@ -1,0 +1,168 @@
+import asyncio
+import logging
+from typing import TYPE_CHECKING
+
+from telegram import Update
+from telegram.error import TimedOut, NetworkError, RetryAfter
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    MessageHandler,
+    filters,
+    ContextTypes,
+)
+
+if TYPE_CHECKING:
+    from agent.pipeline.passive_turn import PassiveTurnPipeline
+
+from agent.core.types import InboundMessage
+
+logger = logging.getLogger(__name__)
+
+
+class TelegramAdapter:
+    """Telegram bot adapter using python-telegram-bot."""
+
+    def __init__(
+        self,
+        token: str,
+        pipeline: "PassiveTurnPipeline",
+        proxy: str | None = None,
+    ) -> None:
+        self.token = token
+        self.pipeline = pipeline
+        self.proxy = proxy
+        self.application: Application | None = None
+
+    async def _handle_message(
+        self,
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE,
+    ) -> None:
+        """Handle incoming message."""
+        if not update.effective_message or not update.effective_user:
+            return
+
+        try:
+            # Parse Update to InboundMessage
+            inbound = InboundMessage(
+                user_id=update.effective_user.id,
+                chat_id=update.effective_chat.id,
+                content=update.effective_message.text or "",
+                metadata={
+                    "update_id": update.update_id,
+                    "username": update.effective_user.username,
+                },
+            )
+
+            logger.info(
+                f"Received message from {inbound.user_id}: {inbound.content[:50]}"
+            )
+
+            # Execute pipeline
+            outbound = await self.pipeline.execute(inbound)
+
+            # Send response (already done by pipeline's after_turn)
+            logger.info(
+                f"Sent response to {outbound.chat_id}: {outbound.content[:50]}"
+            )
+
+        except Exception as e:
+            logger.error(f"Error handling message: {e}", exc_info=True)
+
+    async def _start_command(
+        self,
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE,
+    ) -> None:
+        """Handle /start command."""
+        if update.effective_message:
+            await update.effective_message.reply_text(
+                "你好！我是一个 AI 助手，有什么我可以帮你的吗？"
+            )
+
+    async def send(self, message) -> None:
+        """Send message via Telegram (called by AfterTurnPhase). Retries on network errors."""
+        if not self.application:
+            logger.error("send() called but application is None — message dropped")
+            return
+
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                await self.application.bot.send_message(
+                    chat_id=message.chat_id,
+                    text=message.content,
+                )
+                return
+            except RetryAfter as e:
+                delay = float(getattr(e, "retry_after", 1.0) or 1.0) + 1.0
+                logger.warning(
+                    "send_message rate limited, retry %d/%d in %.1fs",
+                    attempt + 1, max_retries, delay,
+                )
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(delay)
+            except (TimedOut, NetworkError) as e:
+                delay = 2 ** attempt  # 1s, 2s, 4s
+                logger.warning(
+                    "send_message failed (%s), retry %d/%d in %.1fs  chat_id=%s",
+                    type(e).__name__, attempt + 1, max_retries, delay, message.chat_id,
+                )
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(delay)
+        logger.error(
+            "send_message FAILED after %d attempts  chat_id=%s  text=%.100s",
+            max_retries, message.chat_id, message.content,
+        )
+
+    async def start(self) -> None:
+        """Start the bot with polling."""
+        if self.proxy:
+            from telegram.request import HTTPXRequest
+
+            request = HTTPXRequest(
+                proxy=self.proxy,
+                connect_timeout=30.0,
+                read_timeout=60.0,
+                write_timeout=30.0,
+                connection_pool_size=8,
+                pool_timeout=10.0,
+            )
+            get_updates_request = HTTPXRequest(
+                proxy=self.proxy,
+                connect_timeout=30.0,
+                read_timeout=60.0,
+                write_timeout=30.0,
+                connection_pool_size=1,
+                pool_timeout=10.0,
+            )
+            self.application = (
+                Application.builder()
+                .token(self.token)
+                .request(request)
+                .get_updates_request(get_updates_request)
+                .build()
+            )
+            logger.info(f"Using proxy: {self.proxy}")
+        else:
+            self.application = Application.builder().token(self.token).build()
+
+        # Register handlers
+        self.application.add_handler(CommandHandler("start", self._start_command))
+        self.application.add_handler(
+            MessageHandler(filters.TEXT & ~filters.COMMAND, self._handle_message)
+        )
+
+        logger.info("Starting Telegram bot polling...")
+        await self.application.initialize()
+        await self.application.start()
+        await self.application.updater.start_polling(drop_pending_updates=False)
+
+    async def stop(self) -> None:
+        """Stop the bot."""
+        if self.application:
+            logger.info("Stopping Telegram bot...")
+            await self.application.updater.stop()
+            await self.application.stop()
+            await self.application.shutdown()

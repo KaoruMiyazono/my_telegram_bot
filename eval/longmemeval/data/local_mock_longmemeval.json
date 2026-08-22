@@ -1,0 +1,809 @@
+[
+  {
+    "question_id": "green-001",
+    "question_type": "single-session-user",
+    "question": "我喜欢喝什么咖啡？",
+    "answer": "你喜欢喝拿铁",
+    "question_date": "2026-05-13T13:20:29.758028+00:00",
+    "haystack_session_ids": [
+      "f1fba2a1-072d-47f6-bddb-51beb8047e49"
+    ],
+    "haystack_dates": [
+      "2026-05-13T13:20:29.758028+00:00"
+    ],
+    "haystack_sessions": [
+      [
+        {
+          "role": "user",
+          "content": "我喜欢喝咖啡，尤其是拿铁"
+        },
+        {
+          "role": "assistant",
+          "content": "好的，我记住了你喜欢喝拿铁！"
+        }
+      ]
+    ],
+    "answer_session_ids": [
+      "f1fba2a1-072d-47f6-bddb-51beb8047e49"
+    ],
+    "metadata": {
+      "original_question_type": "single_session_fact",
+      "distance_type": "semantic_similarity",
+      "source": "mock",
+      "notes": "单会话事实回忆：用户在同一会话中表达了偏好，Bot 正确记住了"
+    }
+  },
+  {
+    "question_id": "green-002",
+    "question_type": "single-session-user",
+    "question": "你知道我的咖啡偏好吗？说出来。",
+    "answer": "你喜欢喝拿铁",
+    "question_date": "2026-05-13T13:20:29.758028+00:00",
+    "haystack_session_ids": [
+      "f1fba2a1-072d-47f6-bddb-51beb8047e49"
+    ],
+    "haystack_dates": [
+      "2026-05-13T13:20:29.758028+00:00"
+    ],
+    "haystack_sessions": [
+      [
+        {
+          "role": "user",
+          "content": "我喜欢喝咖啡，尤其是拿铁"
+        },
+        {
+          "role": "assistant",
+          "content": "好的，我记住了你喜欢喝拿铁！"
+        }
+      ]
+    ],
+    "answer_session_ids": [
+      "f1fba2a1-072d-47f6-bddb-51beb8047e49"
+    ],
+    "metadata": {
+      "original_question_type": "single_session_fact",
+      "distance_type": "semantic_similarity",
+      "source": "mock",
+      "notes": "单会话事实回忆：确认偏好记忆的召回准确性"
+    }
+  },
+  {
+    "question_id": "green-003",
+    "question_type": "single-session-preference",
+    "question": "我渴了，有什么推荐的吗？",
+    "answer": "根据你的喜好，推荐拿铁",
+    "question_date": "2026-05-13T13:20:29.758028+00:00",
+    "haystack_session_ids": [
+      "f1fba2a1-072d-47f6-bddb-51beb8047e49",
+      "3ccd551a-1aff-4ff3-8f92-7499eced9509"
+    ],
+    "haystack_dates": [
+      "2026-05-13T13:20:29.758028+00:00",
+      "2026-05-13T13:20:29.758028+00:00"
+    ],
+    "haystack_sessions": [
+      [
+        {
+          "role": "user",
+          "content": "我喜欢喝咖啡，尤其是拿铁"
+        },
+        {
+          "role": "assistant",
+          "content": "好的，我记住了你喜欢喝拿铁！"
+        }
+      ],
+      [
+        {
+          "role": "user",
+          "content": "我渴了，有什么推荐的吗？"
+        },
+        {
+          "role": "assistant",
+          "content": "根据你的喜好，我推荐来一杯拿铁！"
+        }
+      ]
+    ],
+    "answer_session_ids": [
+      "f1fba2a1-072d-47f6-bddb-51beb8047e49",
+      "3ccd551a-1aff-4ff3-8f92-7499eced9509"
+    ],
+    "metadata": {
+      "original_question_type": "cross_session_preference",
+      "distance_type": "semantic_similarity",
+      "source": "mock",
+      "notes": "跨会话偏好记忆：偏好信息在 session-1，提问在 session-2。Bot 需要跨会话检索"
+    }
+  },
+  {
+    "question_id": "green-004",
+    "question_type": "knowledge-update",
+    "question": "我现在还喝咖啡吗？",
+    "answer": "你已经不喝咖啡了，改喝茶了",
+    "question_date": "2026-05-13T13:20:29.758028+00:00",
+    "haystack_session_ids": [
+      "f1fba2a1-072d-47f6-bddb-51beb8047e49",
+      "0c2a114b-bf73-4096-836d-bc0cbc5a203f"
+    ],
+    "haystack_dates": [
+      "2026-05-13T13:20:29.758028+00:00",
+      "2026-05-13T13:20:29.758028+00:00"
+    ],
+    "haystack_sessions": [
+      [
+        {
+          "role": "user",
+          "content": "我喜欢喝咖啡，尤其是拿铁"
+        },
+        {
+          "role": "assistant",
+          "content": "好的，我记住了你喜欢喝拿铁！"
+        }
+      ],
+      [
+        {
+          "role": "user",
+          "content": "最近我戒了咖啡，改喝茶了"
+        },
+        {
+          "role": "assistant",
+          "content": "明白了，你已经戒掉咖啡，现在改喝茶了。"
+        }
+      ]
+    ],
+    "answer_session_ids": [
+      "f1fba2a1-072d-47f6-bddb-51beb8047e49",
+      "0c2a114b-bf73-4096-836d-bc0cbc5a203f"
+    ],
+    "metadata": {
+      "original_question_type": "knowledge_update",
+      "distance_type": "semantic_similarity",
+      "source": "mock",
+      "notes": "知识更新 — 关键用例：验证 Bot 使用了最新信息（茶）而非旧信息（咖啡）。这是 RAG 系统最容易出错的场景"
+    }
+  },
+  {
+    "question_id": "green-005",
+    "question_type": "knowledge-update",
+    "question": "我现在喜欢喝什么？",
+    "answer": "你现在喜欢喝茶",
+    "question_date": "2026-05-13T13:20:29.758028+00:00",
+    "haystack_session_ids": [
+      "f1fba2a1-072d-47f6-bddb-51beb8047e49",
+      "0c2a114b-bf73-4096-836d-bc0cbc5a203f"
+    ],
+    "haystack_dates": [
+      "2026-05-13T13:20:29.758028+00:00",
+      "2026-05-13T13:20:29.758028+00:00"
+    ],
+    "haystack_sessions": [
+      [
+        {
+          "role": "user",
+          "content": "我喜欢喝咖啡，尤其是拿铁"
+        },
+        {
+          "role": "assistant",
+          "content": "好的，我记住了你喜欢喝拿铁！"
+        }
+      ],
+      [
+        {
+          "role": "user",
+          "content": "最近我戒了咖啡，改喝茶了"
+        },
+        {
+          "role": "assistant",
+          "content": "明白了，你已经戒掉咖啡，现在改喝茶了。"
+        }
+      ]
+    ],
+    "answer_session_ids": [
+      "f1fba2a1-072d-47f6-bddb-51beb8047e49",
+      "0c2a114b-bf73-4096-836d-bc0cbc5a203f"
+    ],
+    "metadata": {
+      "original_question_type": "knowledge_update",
+      "distance_type": "semantic_similarity",
+      "source": "mock",
+      "notes": "知识更新：与 green-004 互补，直接询问当前偏好"
+    }
+  },
+  {
+    "question_id": "green-006",
+    "question_type": "single-session-user",
+    "question": "我是做什么工作的？",
+    "answer": "你是个程序员",
+    "question_date": "2026-05-13T13:20:29.758028+00:00",
+    "haystack_session_ids": [
+      "a3271ef7-8d02-428a-a2a6-98c4302a6d97"
+    ],
+    "haystack_dates": [
+      "2026-05-13T13:20:29.758028+00:00"
+    ],
+    "haystack_sessions": [
+      [
+        {
+          "role": "user",
+          "content": "我是个程序员，最常用的编程语言是 Python"
+        },
+        {
+          "role": "assistant",
+          "content": "好的，Python 是个很棒的语言！"
+        }
+      ]
+    ],
+    "answer_session_ids": [
+      "a3271ef7-8d02-428a-a2a6-98c4302a6d97"
+    ],
+    "metadata": {
+      "original_question_type": "user_identity",
+      "distance_type": "semantic_similarity",
+      "source": "mock",
+      "notes": "用户身份记忆：验证用户职业信息的检索"
+    }
+  },
+  {
+    "question_id": "green-007",
+    "question_type": "single-session-user",
+    "question": "我用什么编程语言？",
+    "answer": "你主要用 Python",
+    "question_date": "2026-05-13T13:20:29.758028+00:00",
+    "haystack_session_ids": [
+      "a3271ef7-8d02-428a-a2a6-98c4302a6d97"
+    ],
+    "haystack_dates": [
+      "2026-05-13T13:20:29.758028+00:00"
+    ],
+    "haystack_sessions": [
+      [
+        {
+          "role": "user",
+          "content": "我是个程序员，最常用的编程语言是 Python"
+        },
+        {
+          "role": "assistant",
+          "content": "好的，Python 是个很棒的语言！"
+        }
+      ]
+    ],
+    "answer_session_ids": [
+      "a3271ef7-8d02-428a-a2a6-98c4302a6d97"
+    ],
+    "metadata": {
+      "original_question_type": "user_identity",
+      "distance_type": "semantic_similarity",
+      "source": "mock",
+      "notes": "用户身份记忆：验证编程语言偏好的事实提取"
+    }
+  },
+  {
+    "question_id": "green-008",
+    "question_type": "knowledge-update",
+    "question": "我以前说过我喜欢喝什么？全部告诉我。",
+    "answer": "你之前喜欢喝拿铁，后来改喝茶了",
+    "question_date": "2026-05-13T13:20:29.758028+00:00",
+    "haystack_session_ids": [
+      "f1fba2a1-072d-47f6-bddb-51beb8047e49",
+      "0c2a114b-bf73-4096-836d-bc0cbc5a203f"
+    ],
+    "haystack_dates": [
+      "2026-05-13T13:20:29.758028+00:00",
+      "2026-05-13T13:20:29.758028+00:00"
+    ],
+    "haystack_sessions": [
+      [
+        {
+          "role": "user",
+          "content": "我喜欢喝咖啡，尤其是拿铁"
+        },
+        {
+          "role": "assistant",
+          "content": "好的，我记住了你喜欢喝拿铁！"
+        }
+      ],
+      [
+        {
+          "role": "user",
+          "content": "最近我戒了咖啡，改喝茶了"
+        },
+        {
+          "role": "assistant",
+          "content": "明白了，你已经戒掉咖啡，现在改喝茶了。"
+        }
+      ]
+    ],
+    "answer_session_ids": [
+      "f1fba2a1-072d-47f6-bddb-51beb8047e49",
+      "0c2a114b-bf73-4096-836d-bc0cbc5a203f"
+    ],
+    "metadata": {
+      "original_question_type": "knowledge_update",
+      "distance_type": "semantic_similarity",
+      "source": "mock",
+      "notes": "知识更新：需要同时召回旧偏好和新偏好，验证记忆的时序完整性"
+    }
+  },
+  {
+    "question_id": "green-009",
+    "question_type": "single-session-user",
+    "question": "我的生日是哪天？",
+    "answer": "你的生日是6月15号",
+    "question_date": "2026-05-13T13:20:29.758028+00:00",
+    "haystack_session_ids": [
+      "0f4049c8-2eec-4453-a689-3d4063684afd"
+    ],
+    "haystack_dates": [
+      "2026-05-13T13:20:29.758028+00:00"
+    ],
+    "haystack_sessions": [
+      [
+        {
+          "role": "user",
+          "content": "我的生日是 6 月 15 号"
+        },
+        {
+          "role": "assistant",
+          "content": "好的，我记住了你的生日是 6 月 15 号！"
+        }
+      ]
+    ],
+    "answer_session_ids": [
+      "0f4049c8-2eec-4453-a689-3d4063684afd"
+    ],
+    "metadata": {
+      "original_question_type": "single_session_fact",
+      "distance_type": "exact_match",
+      "source": "mock",
+      "notes": "单会话精确匹配：日期类信息适合 exact_match。生日信息来自 mock 会话。"
+    }
+  },
+  {
+    "question_id": "green-010",
+    "question_type": "single-session-user",
+    "question": "给我一个项目建议，用我擅长的技术栈。",
+    "answer": "你可以用 Python 的 Django 或 FastAPI 框架来做后端",
+    "question_date": "2026-05-13T13:20:29.758028+00:00",
+    "haystack_session_ids": [
+      "a3271ef7-8d02-428a-a2a6-98c4302a6d97",
+      "33b53d36-8534-4382-8cc7-3a3cc3248d8f"
+    ],
+    "haystack_dates": [
+      "2026-05-13T13:20:29.758028+00:00",
+      "2026-05-13T13:20:29.758028+00:00"
+    ],
+    "haystack_sessions": [
+      [
+        {
+          "role": "user",
+          "content": "我是个程序员，最常用的编程语言是 Python"
+        },
+        {
+          "role": "assistant",
+          "content": "好的，Python 是个很棒的语言！"
+        }
+      ],
+      [
+        {
+          "role": "user",
+          "content": "最近在写一个新项目，有什么建议吗？"
+        },
+        {
+          "role": "assistant",
+          "content": "既然你用 Python，可以考虑用 Django 或者 FastAPI 做后端框架。"
+        }
+      ]
+    ],
+    "answer_session_ids": [
+      "a3271ef7-8d02-428a-a2a6-98c4302a6d97",
+      "33b53d36-8534-4382-8cc7-3a3cc3248d8f"
+    ],
+    "metadata": {
+      "original_question_type": "multi_turn_context",
+      "distance_type": "semantic_similarity",
+      "source": "mock",
+      "notes": "多轮上下文：需要结合用户身份（Python 程序员）给出个性化建议，而不能是泛泛的答案"
+    }
+  },
+  {
+    "question_id": "green-011",
+    "question_type": "single-session-preference",
+    "question": "我喜欢听什么音乐人？",
+    "answer": "你喜欢听爵士乐，尤其是 Miles Davis",
+    "question_date": "2026-05-13T13:20:29.758028+00:00",
+    "haystack_session_ids": [
+      "6528cca5-82ba-4292-b3f5-d14d2d858555",
+      "24cafc8a-bfbb-4e20-bc32-17f9ef6a1a1b",
+      "1a7a9c3f-8cc8-44ca-900f-3920e55fa065",
+      "619c1fe5-b459-45db-bf29-6d7d3206865b"
+    ],
+    "haystack_dates": [
+      "2026-05-13T13:20:29.758028+00:00",
+      "2026-05-13T13:20:29.758028+00:00",
+      "2026-05-13T13:20:29.758028+00:00",
+      "2026-05-13T13:20:29.758028+00:00"
+    ],
+    "haystack_sessions": [
+      [
+        {
+          "role": "user",
+          "content": "我喜欢吃辣的，尤其是川菜"
+        },
+        {
+          "role": "assistant",
+          "content": "川菜确实够味！我记住了你喜欢吃辣。"
+        }
+      ],
+      [
+        {
+          "role": "user",
+          "content": "我不太喜欢摇滚乐，太吵了"
+        },
+        {
+          "role": "assistant",
+          "content": "了解了，你不喜欢摇滚乐。喜欢安静的爵士风格。"
+        }
+      ],
+      [
+        {
+          "role": "user",
+          "content": "我特别喜欢听爵士乐，尤其是 Miles Davis"
+        },
+        {
+          "role": "assistant",
+          "content": "Miles Davis 是爵士乐传奇！我记住了你喜欢爵士乐。"
+        }
+      ],
+      [
+        {
+          "role": "user",
+          "content": "我住在北京，但公司在杭州，经常两地跑"
+        },
+        {
+          "role": "assistant",
+          "content": "记住了，你住在北京，工作在杭州，经常出差。"
+        }
+      ]
+    ],
+    "answer_session_ids": [
+      "6528cca5-82ba-4292-b3f5-d14d2d858555",
+      "24cafc8a-bfbb-4e20-bc32-17f9ef6a1a1b",
+      "1a7a9c3f-8cc8-44ca-900f-3920e55fa065",
+      "619c1fe5-b459-45db-bf29-6d7d3206865b"
+    ],
+    "metadata": {
+      "original_question_type": "cross_session_preference",
+      "distance_type": "semantic_similarity",
+      "source": "mock",
+      "notes": "长 haystack + 干扰：食物、摇滚、居住地都是噪声，正确答案在爵士乐会话。用于逼近 LongMemEval 的 haystack 检索场景。"
+    }
+  },
+  {
+    "question_id": "green-012",
+    "question_type": "single-session-user",
+    "question": "我的公司在哪个城市？",
+    "answer": "你的公司在杭州",
+    "question_date": "2026-05-13T13:20:29.758028+00:00",
+    "haystack_session_ids": [
+      "1a7a9c3f-8cc8-44ca-900f-3920e55fa065",
+      "619c1fe5-b459-45db-bf29-6d7d3206865b",
+      "6528cca5-82ba-4292-b3f5-d14d2d858555"
+    ],
+    "haystack_dates": [
+      "2026-05-13T13:20:29.758028+00:00",
+      "2026-05-13T13:20:29.758028+00:00",
+      "2026-05-13T13:20:29.758028+00:00"
+    ],
+    "haystack_sessions": [
+      [
+        {
+          "role": "user",
+          "content": "我特别喜欢听爵士乐，尤其是 Miles Davis"
+        },
+        {
+          "role": "assistant",
+          "content": "Miles Davis 是爵士乐传奇！我记住了你喜欢爵士乐。"
+        }
+      ],
+      [
+        {
+          "role": "user",
+          "content": "我住在北京，但公司在杭州，经常两地跑"
+        },
+        {
+          "role": "assistant",
+          "content": "记住了，你住在北京，工作在杭州，经常出差。"
+        }
+      ],
+      [
+        {
+          "role": "user",
+          "content": "我喜欢吃辣的，尤其是川菜"
+        },
+        {
+          "role": "assistant",
+          "content": "川菜确实够味！我记住了你喜欢吃辣。"
+        }
+      ]
+    ],
+    "answer_session_ids": [
+      "1a7a9c3f-8cc8-44ca-900f-3920e55fa065",
+      "619c1fe5-b459-45db-bf29-6d7d3206865b",
+      "6528cca5-82ba-4292-b3f5-d14d2d858555"
+    ],
+    "metadata": {
+      "original_question_type": "user_identity",
+      "distance_type": "semantic_similarity",
+      "source": "mock",
+      "notes": "原文定位：问题需要从居住地/工作地同句中取具体城市，适合 recall 后 search_messages/fetch_messages 回源确认。"
+    }
+  },
+  {
+    "question_id": "green-013",
+    "question_type": "knowledge-update",
+    "question": "我现在用 iPhone 还是 Android？",
+    "answer": "你现在用 Android",
+    "question_date": "2026-05-13T13:20:29.758028+00:00",
+    "haystack_session_ids": [
+      "f1fba2a1-072d-47f6-bddb-51beb8047e49",
+      "d30dedb8-919e-4571-83f6-5aa2e74b9f94"
+    ],
+    "haystack_dates": [
+      "2026-05-13T13:20:29.758028+00:00",
+      "2026-05-13T13:20:29.758028+00:00"
+    ],
+    "haystack_sessions": [
+      [
+        {
+          "role": "user",
+          "content": "我喜欢喝咖啡，尤其是拿铁"
+        },
+        {
+          "role": "assistant",
+          "content": "好的，我记住了你喜欢喝拿铁！"
+        }
+      ],
+      [
+        {
+          "role": "user",
+          "content": "我换了手机，之前用 iPhone，现在用 Android 了"
+        },
+        {
+          "role": "assistant",
+          "content": "收到，你的手机偏好已更新：iPhone → Android。"
+        }
+      ]
+    ],
+    "answer_session_ids": [
+      "f1fba2a1-072d-47f6-bddb-51beb8047e49",
+      "d30dedb8-919e-4571-83f6-5aa2e74b9f94"
+    ],
+    "metadata": {
+      "original_question_type": "knowledge_update",
+      "distance_type": "semantic_similarity",
+      "source": "mock",
+      "notes": "知识更新：同一句里包含旧值 iPhone 和新值 Android，测试是否选择更新后的当前状态。"
+    }
+  },
+  {
+    "question_id": "red-001",
+    "question_type": "single-session-user",
+    "question": "我是做什么工作的？",
+    "answer": "你是个程序员",
+    "question_date": "2026-05-13T13:20:29.758028+00:00",
+    "haystack_session_ids": [
+      "a3271ef7-8d02-428a-a2a6-98c4302a6d97"
+    ],
+    "haystack_dates": [
+      "2026-05-13T13:20:29.758028+00:00"
+    ],
+    "haystack_sessions": [
+      [
+        {
+          "role": "user",
+          "content": "我是个程序员，最常用的编程语言是 Python"
+        },
+        {
+          "role": "assistant",
+          "content": "好的，Python 是个很棒的语言！"
+        }
+      ]
+    ],
+    "answer_session_ids": [
+      "a3271ef7-8d02-428a-a2a6-98c4302a6d97"
+    ],
+    "metadata": {
+      "original_question_type": "user_identity",
+      "distance_type": "semantic_similarity",
+      "source": "mock",
+      "notes": "红灯用例：bot 说没记录，但种子数据里有'我是个程序员'。向量检索对'做什么工作'和'程序员'的语义匹配不足。调检索策略应该能修。"
+    }
+  },
+  {
+    "question_id": "red-002",
+    "question_type": "single-session-user",
+    "question": "给我一个项目建议，用我擅长的技术栈。",
+    "answer": "你可以用 Python 的 Django 或 FastAPI 框架来做后端",
+    "question_date": "2026-05-13T13:20:29.758028+00:00",
+    "haystack_session_ids": [
+      "a3271ef7-8d02-428a-a2a6-98c4302a6d97",
+      "33b53d36-8534-4382-8cc7-3a3cc3248d8f"
+    ],
+    "haystack_dates": [
+      "2026-05-13T13:20:29.758028+00:00",
+      "2026-05-13T13:20:29.758028+00:00"
+    ],
+    "haystack_sessions": [
+      [
+        {
+          "role": "user",
+          "content": "我是个程序员，最常用的编程语言是 Python"
+        },
+        {
+          "role": "assistant",
+          "content": "好的，Python 是个很棒的语言！"
+        }
+      ],
+      [
+        {
+          "role": "user",
+          "content": "最近在写一个新项目，有什么建议吗？"
+        },
+        {
+          "role": "assistant",
+          "content": "既然你用 Python，可以考虑用 Django 或者 FastAPI 做后端框架。"
+        }
+      ]
+    ],
+    "answer_session_ids": [
+      "a3271ef7-8d02-428a-a2a6-98c4302a6d97",
+      "33b53d36-8534-4382-8cc7-3a3cc3248d8f"
+    ],
+    "metadata": {
+      "original_question_type": "multi_turn_context",
+      "distance_type": "semantic_similarity",
+      "source": "mock",
+      "notes": "红灯用例：bot 给了通用建议而非结合'Python 程序员'的个性化答案。检索到的记忆可能没有充分融入 prompt，或者 LLM 没有利用检索结果。"
+    }
+  },
+  {
+    "question_id": "red-003",
+    "question_type": "knowledge-update",
+    "question": "我以前说过我的饮料偏好吗？",
+    "answer": "你喜欢喝拿铁，但后来改喝茶了",
+    "question_date": "2026-05-13T13:20:29.758028+00:00",
+    "haystack_session_ids": [
+      "f1fba2a1-072d-47f6-bddb-51beb8047e49",
+      "0c2a114b-bf73-4096-836d-bc0cbc5a203f"
+    ],
+    "haystack_dates": [
+      "2026-05-13T13:20:29.758028+00:00",
+      "2026-05-13T13:20:29.758028+00:00"
+    ],
+    "haystack_sessions": [
+      [
+        {
+          "role": "user",
+          "content": "我喜欢喝咖啡，尤其是拿铁"
+        },
+        {
+          "role": "assistant",
+          "content": "好的，我记住了你喜欢喝拿铁！"
+        }
+      ],
+      [
+        {
+          "role": "user",
+          "content": "最近我戒了咖啡，改喝茶了"
+        },
+        {
+          "role": "assistant",
+          "content": "明白了，你已经戒掉咖啡，现在改喝茶了。"
+        }
+      ]
+    ],
+    "answer_session_ids": [
+      "f1fba2a1-072d-47f6-bddb-51beb8047e49",
+      "0c2a114b-bf73-4096-836d-bc0cbc5a203f"
+    ],
+    "metadata": {
+      "original_question_type": "knowledge_update",
+      "distance_type": "semantic_similarity",
+      "source": "mock",
+      "notes": "红灯用例：用'饮料偏好'而非'咖啡偏好'提问，测试检索对同义词的泛化能力。如果纯向量检索对'饮料'和'咖啡'的关联不够，这个会失败。调 RRF 融合关键词后应该改善。"
+    }
+  },
+  {
+    "question_id": "red-004",
+    "question_type": "knowledge-update",
+    "question": "我现在喝茶还是咖啡？",
+    "answer": "你现在喝茶，已经不喝咖啡了",
+    "question_date": "2026-05-13T13:20:29.758028+00:00",
+    "haystack_session_ids": [
+      "f1fba2a1-072d-47f6-bddb-51beb8047e49",
+      "0c2a114b-bf73-4096-836d-bc0cbc5a203f"
+    ],
+    "haystack_dates": [
+      "2026-05-13T13:20:29.758028+00:00",
+      "2026-05-13T13:20:29.758028+00:00"
+    ],
+    "haystack_sessions": [
+      [
+        {
+          "role": "user",
+          "content": "我喜欢喝咖啡，尤其是拿铁"
+        },
+        {
+          "role": "assistant",
+          "content": "好的，我记住了你喜欢喝拿铁！"
+        }
+      ],
+      [
+        {
+          "role": "user",
+          "content": "最近我戒了咖啡，改喝茶了"
+        },
+        {
+          "role": "assistant",
+          "content": "明白了，你已经戒掉咖啡，现在改喝茶了。"
+        }
+      ]
+    ],
+    "answer_session_ids": [
+      "f1fba2a1-072d-47f6-bddb-51beb8047e49",
+      "0c2a114b-bf73-4096-836d-bc0cbc5a203f"
+    ],
+    "metadata": {
+      "original_question_type": "knowledge_update",
+      "distance_type": "semantic_similarity",
+      "source": "mock",
+      "notes": "红灯用例：直接二选一问题。需要 bot 检索到最新的更新（改喝茶）而非旧偏好（拿铁）。测试知识更新的检索优先级。"
+    }
+  },
+  {
+    "question_id": "red-005",
+    "question_type": "single-session-preference",
+    "question": "有什么喝的可以推荐？",
+    "answer": "推荐喝茶，因为你最近戒了咖啡改喝茶了",
+    "question_date": "2026-05-13T13:20:29.758028+00:00",
+    "haystack_session_ids": [
+      "f1fba2a1-072d-47f6-bddb-51beb8047e49",
+      "0c2a114b-bf73-4096-836d-bc0cbc5a203f"
+    ],
+    "haystack_dates": [
+      "2026-05-13T13:20:29.758028+00:00",
+      "2026-05-13T13:20:29.758028+00:00"
+    ],
+    "haystack_sessions": [
+      [
+        {
+          "role": "user",
+          "content": "我喜欢喝咖啡，尤其是拿铁"
+        },
+        {
+          "role": "assistant",
+          "content": "好的，我记住了你喜欢喝拿铁！"
+        }
+      ],
+      [
+        {
+          "role": "user",
+          "content": "最近我戒了咖啡，改喝茶了"
+        },
+        {
+          "role": "assistant",
+          "content": "明白了，你已经戒掉咖啡，现在改喝茶了。"
+        }
+      ]
+    ],
+    "answer_session_ids": [
+      "f1fba2a1-072d-47f6-bddb-51beb8047e49",
+      "0c2a114b-bf73-4096-836d-bc0cbc5a203f"
+    ],
+    "metadata": {
+      "original_question_type": "cross_session_preference",
+      "distance_type": "semantic_similarity",
+      "source": "mock",
+      "notes": "红灯用例：用'喝的'而非'咖啡'或'茶'提问。纯向量检索可能搜不到精确匹配。调关键词权重后应该改善。"
+    }
+  }
+]

@@ -1,0 +1,21 @@
+[tool.poetry]
+package-mode = false
+name = "my-telegram-bot"
+version = "0.1.0"
+description = "A Telegram AI agent with tools, plugins, session history, and vector memory"
+authors = ["Zhiyong Zheng <1742474020@qq.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.11"
+python-telegram-bot = {version = "^21.0", extras = ["socks"]}
+openai = "^1.0"
+numpy = "^1.26"
+sqlite-vec = "^0.1"
+pydantic = "^2.0"
+pydantic-settings = "^2.0"
+langsmith = "^0.8.5"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
