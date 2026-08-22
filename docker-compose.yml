@@ -7,8 +7,8 @@ services:
       - .env
     environment:
       DATABASE_PATH: /app/data/memory.db
-      HTTP_PROXY: ${BOT_HTTP_PROXY:-http://host.docker.internal:7897}
-      HTTPS_PROXY: ${BOT_HTTPS_PROXY:-http://host.docker.internal:7897}
+      HTTP_PROXY: ${BOT_HTTP_PROXY:-}
+      HTTPS_PROXY: ${BOT_HTTPS_PROXY:-}
       NO_PROXY: ${NO_PROXY:-localhost,127.0.0.1,::1}
       TZ: ${TZ:-Asia/Shanghai}
     extra_hosts:
