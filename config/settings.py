@@ -27,5 +27,16 @@ class Settings(BaseSettings):
     # Proxy (for Telegram API in China)
     HTTP_PROXY: str | None = None
 
+    # Web search and fetch
+    WEB_SEARCH_ENDPOINT: str = "https://mcp.exa.ai/mcp"
+    SEARCH_API_KEY: str | None = None
+    WEB_PROXY: str | None = None
+    WEB_SEARCH_TIMEOUT: float = 25.0
+    WEB_SEARCH_MAX_RESULTS: int = 5
+    WEB_FETCH_TIMEOUT: float = 20.0
+    WEB_FETCH_MAX_BYTES: int = 5 * 1024 * 1024
+    WEB_FETCH_MAX_CHARS: int = 15_000
+    WEB_FETCH_MAX_REDIRECTS: int = 3
+
 
 settings = Settings()

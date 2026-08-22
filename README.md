@@ -8,6 +8,7 @@
 - 🧠 **智能检索**：基于语义相似度和关键词混合检索
 - 🔄 **对话管理**：支持多轮对话，记忆会话历史
 - 🤖 **工具调用**：通过 ToolRegistry / ToolExecutor 统一调度内置记忆工具和插件工具
+- 🌐 **联网检索**：内置 `web_search` 和安全版 `web_fetch`，支持时效性搜索、来源核实和 URL 引用
 - 🧩 **插件生命周期**：支持 Akashic 风格 PhaseModule、slot export、prompt_render 插入点
 
 ## 技术栈
@@ -41,6 +42,18 @@
 HTTP_PROXY=socks5://127.0.0.1:7897
 ```
 
+联网搜索默认使用 Exa 的公开 MCP HTTP 端点，无需密钥即可试用。生产环境可配置 `SEARCH_API_KEY` 提高额度；联网工具代理与 Telegram 代理分开设置：
+
+```dotenv
+SEARCH_API_KEY=
+WEB_PROXY=socks5://127.0.0.1:7897
+WEB_SEARCH_MAX_RESULTS=5
+WEB_FETCH_TIMEOUT=20
+WEB_FETCH_MAX_CHARS=15000
+```
+
+`web_fetch` 只允许访问公开 HTTP/HTTPS 地址，会阻止本机、内网、保留地址、云元数据地址及指向这些地址的重定向。
+
 请勿提交 `.env`、数据库、运行日志或用户对话数据；这些内容已由 `.gitignore` 排除。
 
 ### Docker 部署
@@ -62,7 +75,7 @@ telegram-bot-mvp/
 │   ├── plugins/         # 插件管理器、上下文、装饰器
 │   ├── prompting/       # Prompt 渲染与 section 组装
 │   ├── tool_hooks/      # 工具调用前置 hook 链
-│   └── tools/           # ToolRegistry、ToolExecutor、内置工具注册
+│   └── tools/           # ToolRegistry、ToolExecutor、记忆与 Web 内置工具
 ├── channels/           # 消息通道
 │   └── telegram/        # Telegram 集成
 ├── memory/             # 记忆管理

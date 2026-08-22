@@ -13,6 +13,7 @@ from agent.plugins import PluginManager
 from agent.tool_hooks import ToolExecutor
 from agent.tools import ToolRegistry
 from agent.tools.memory import register_memory_tools
+from agent.tools.web import register_web_tools
 from channels.telegram.adapter import TelegramAdapter
 from config.settings import settings
 from evaluation.conversation_logger import ConversationLogger
@@ -72,6 +73,8 @@ async def main() -> None:
     )
     #  注册 记忆相关的工具
     register_memory_tools(tool_registry, memory_runtime.engine)
+    # 注册只读联网搜索和网页抓取工具
+    register_web_tools(tool_registry)
 
     # 5. Initialize plugin runtime after built-ins, so plugin tools can override by name. 初始化插件管理
     plugin_manager = PluginManager(

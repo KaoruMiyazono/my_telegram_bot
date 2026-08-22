@@ -35,6 +35,9 @@ jobs:
             agent/pipeline/consolidation_worker.py \
             agent/pipeline/passive_turn.py \
             agent/pipeline/reasoner.py \
+            agent/tools/web_search.py \
+            agent/tools/web_fetch.py \
+            agent/tools/web.py \
             memory/store.py \
             persistence/session_store.py \
             main.py
@@ -51,6 +54,7 @@ jobs:
           poetry run python tests/test_session_store.py
           poetry run python tests/test_memory_store.py
           poetry run python tests/test_reasoner.py
+          poetry run python tests/test_web_tools.py
           poetry run python tests/test_replay_runner.py
           poetry run python tests/test_longmemeval_conversion.py
           poetry run python tests/test_pipeline_integration.py
