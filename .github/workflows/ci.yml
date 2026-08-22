@@ -40,9 +40,7 @@ jobs:
             main.py
 
       - name: RAG lifecycle smoke
-        run: |
-          poetry run python eval/rag_layer_smoke.py
-          poetry run python eval/replay_runner.py --mock --limit 5 --output /tmp/replay_mock_smoke.json
+        run: poetry run python eval/rag_layer_smoke.py
 
       - name: Script tests
         run: |

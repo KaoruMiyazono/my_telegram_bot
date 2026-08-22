@@ -33,6 +33,9 @@ venv/
 data/*
 !data/evaluation/
 data/evaluation/*
+!data/evaluation/mock_conversations.jsonl
+!data/evaluation/green_set.json
+!data/evaluation/red_set.json
 !data/evaluation/retrieval_strategy_lab.jsonl
 *.db
 *.db-*
