@@ -248,6 +248,10 @@ class SessionStore:
         """删除会话"""
         conn = get_connection()
         conn.execute(
+            "DELETE FROM session_compactions WHERE user_id = ? AND chat_id = ?",
+            (user_id, chat_id),
+        )
+        conn.execute(
             "DELETE FROM conversation_sessions WHERE user_id = ? AND chat_id = ?",
             (user_id, chat_id),
         )

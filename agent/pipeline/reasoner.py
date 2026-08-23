@@ -2,6 +2,7 @@ import asyncio
 import json
 import re
 from collections.abc import Sequence
+from copy import deepcopy
 
 from openai import AsyncOpenAI
 
@@ -25,6 +26,11 @@ from agent.runtime.context_budget import (
     ContextBudgetConfig,
     ContextBudgetExceeded,
     ContextLevel,
+)
+from agent.runtime.session_compaction import (
+    SessionCompactionConfig,
+    SessionContextCompactionError,
+    SessionContextCompactor,
 )
 from agent.tool_hooks.executor import ToolExecutor
 from agent.tools.registry import ToolRegistry
@@ -124,6 +130,7 @@ class Reasoner:
         before_step_modules: Sequence[object] | None = None,
         after_step_modules: Sequence[object] | None = None,
         context_budget: ContextBudget | None = None,
+        session_compaction_config: SessionCompactionConfig | None = None,
     ) -> None:
         #  LLM client for reasoning and tool call orchestration
         self.client = AsyncOpenAI(
@@ -140,11 +147,15 @@ class Reasoner:
             executor=self._tool_executor,
         )
         self._event_bus = event_bus or EventBus.get_instance()
-        self._context_budget = context_budget or ContextBudget(
-            ContextBudgetConfig(
-                context_window=settings.LLM_CONTEXT_WINDOW,
-                output_reserve=settings.LLM_OUTPUT_RESERVE,
-            )
+        # Explicit injection keeps the former L0-L4 projector available for
+        # compatibility tests. Production uses the persistent session ledger.
+        self._legacy_context_budget = context_budget
+        self._session_compaction_config = session_compaction_config or SessionCompactionConfig(
+            context_window=settings.LLM_CONTEXT_WINDOW,
+            output_reserve=settings.LLM_OUTPUT_RESERVE,
+            soft_limit_ratio=settings.LLM_CONTEXT_SOFT_LIMIT_RATIO,
+            keep_recent_tokens=settings.LLM_CONTEXT_KEEP_RECENT_TOKENS,
+            summary_max_tokens=settings.LLM_COMPACTION_SUMMARY_MAX_TOKENS,
         )
         self.set_step_modules(
             before_step=before_step_modules,
@@ -256,6 +267,18 @@ class Reasoner:
         messages = ctx.messages.copy()
         tool_calls: list[dict] = []
         context_trace: list[dict[str, object]] = []
+        compactor = (
+            None
+            if self._legacy_context_budget is not None
+            else SessionContextCompactor(
+                user_id=ctx.session.user_id,
+                chat_id=ctx.session.chat_id,
+                session_messages=ctx.session.messages,
+                model=self.model,
+                summary_builder=self._build_session_compaction_summary,
+                config=self._session_compaction_config,
+            )
+        )
 
         for iteration in range(_MAX_LLM_ITERATIONS):
             step_ctx = await self._run_before_step(ctx, iteration, messages)
@@ -275,40 +298,25 @@ class Reasoner:
                         "content": "# Step Hints\n" + "\n".join(step_ctx.extra_hints),
                     }
                 )
-            minimum_level = ContextLevel.COMPLETE
-            while True:
-                projection = self._context_budget.project(
-                    messages,
-                    tools=ctx.tools,
-                    prompt_sections=ctx.prompt_sections,
-                    source_ref=f"session:{ctx.session.user_id}:{ctx.session.chat_id}",
-                    min_level=minimum_level,
+            if self._legacy_context_budget is not None:
+                response = await self._call_with_legacy_context_budget(
+                    ctx=ctx,
+                    messages=messages,
+                    context_trace=context_trace,
+                    iteration=iteration,
                 )
-                context_trace.append(projection.trace.to_dict())
-                try:
-                    request_kwargs = {
-                        "model": self.model,
-                        "messages": projection.messages,
-                        "tools": projection.tools,
-                    }
-                    if self._context_budget.config.output_reserve > 0:
-                        request_kwargs["max_tokens"] = self._context_budget.config.output_reserve
-                    response = await self.client.chat.completions.create(**request_kwargs)
-                    break
-                except Exception as error:
-                    if _is_context_length_error(error) and projection.trace.level < ContextLevel.MINIMAL_SAFE:
-                        minimum_level = ContextLevel(int(projection.trace.level) + 1)
-                        continue
-                    if _is_context_length_error(error):
-                        raise ContextBudgetExceeded(
-                            "Provider rejected the minimal safe context"
-                        ) from error
-                    if iteration == 0:
-                        await asyncio.sleep(0.5)
-                        response = None
-                        break
-                    raise
+            else:
+                assert compactor is not None
+                response = await self._call_with_session_compaction(
+                    ctx=ctx,
+                    messages=messages,
+                    context_trace=context_trace,
+                    compactor=compactor,
+                    iteration=iteration,
+                )
             if response is None:
+                if iteration == 0:
+                    await asyncio.sleep(0.5)
                 continue
 
             choice = response.choices[0]
@@ -464,6 +472,115 @@ class Reasoner:
             trace_id=ctx.trace_id,
             context_trace=list(context_trace),
         )
+
+    async def _call_with_legacy_context_budget(
+        self,
+        *,
+        ctx: BeforeReasoningCtx,
+        messages: list[dict],
+        context_trace: list[dict[str, object]],
+        iteration: int,
+    ):
+        budget = self._legacy_context_budget
+        assert budget is not None
+        minimum_level = ContextLevel.COMPLETE
+        while True:
+            projection = budget.project(
+                messages,
+                tools=ctx.tools,
+                prompt_sections=ctx.prompt_sections,
+                source_ref=f"session:{ctx.session.user_id}:{ctx.session.chat_id}",
+                min_level=minimum_level,
+            )
+            context_trace.append(projection.trace.to_dict())
+            try:
+                request_kwargs = {
+                    "model": self.model,
+                    "messages": projection.messages,
+                    "tools": projection.tools,
+                }
+                if budget.config.output_reserve > 0:
+                    request_kwargs["max_tokens"] = budget.config.output_reserve
+                return await self.client.chat.completions.create(**request_kwargs)
+            except Exception as error:
+                if _is_context_length_error(error) and projection.trace.level < ContextLevel.MINIMAL_SAFE:
+                    minimum_level = ContextLevel(int(projection.trace.level) + 1)
+                    continue
+                if _is_context_length_error(error):
+                    raise ContextBudgetExceeded(
+                        "Provider rejected the minimal safe context"
+                    ) from error
+                if iteration > 0:
+                    raise
+                return None
+
+    async def _call_with_session_compaction(
+        self,
+        *,
+        ctx: BeforeReasoningCtx,
+        messages: list[dict],
+        context_trace: list[dict[str, object]],
+        compactor: SessionContextCompactor,
+        iteration: int,
+    ):
+        prepared = await compactor.prepare(messages, tools=ctx.tools)
+        context_trace.append(prepared.trace)
+        forced = False
+        while True:
+            request_kwargs = {
+                "model": self.model,
+                "messages": deepcopy(messages),
+                # Snapshot the visible schemas for this provider call. tool_search
+                # may mutate ctx.tools while the ReAct loop is still running.
+                "tools": deepcopy(ctx.tools),
+            }
+            if self._session_compaction_config.output_reserve > 0:
+                request_kwargs["max_tokens"] = self._session_compaction_config.output_reserve
+            try:
+                return await self.client.chat.completions.create(**request_kwargs)
+            except Exception as error:
+                if _is_context_length_error(error) and not forced:
+                    prepared = await compactor.prepare(
+                        messages,
+                        tools=ctx.tools,
+                        trigger="context_overflow",
+                        force=True,
+                    )
+                    context_trace.append(prepared.trace)
+                    forced = True
+                    continue
+                if _is_context_length_error(error):
+                    raise SessionContextCompactionError(
+                        "Provider rejected context after forced compaction"
+                    ) from error
+                if iteration > 0:
+                    raise
+                return None
+
+    async def _build_session_compaction_summary(
+        self,
+        prompt: str,
+        max_tokens: int,
+    ) -> tuple[str, dict[str, object] | None]:
+        response = await self.client.chat.completions.create(
+            model=self.model,
+            messages=[{"role": "user", "content": prompt}],
+            tools=[],
+            max_tokens=max_tokens,
+        )
+        content = str(response.choices[0].message.content or "").strip()
+        usage = getattr(response, "usage", None)
+        if usage is None:
+            usage_data = None
+        elif hasattr(usage, "model_dump"):
+            usage_data = dict(usage.model_dump())
+        else:
+            usage_data = {
+                key: value
+                for key in ("prompt_tokens", "completion_tokens", "total_tokens")
+                if (value := getattr(usage, key, None)) is not None
+            }
+        return content, usage_data
 
     async def _run_evidence_fetch_guard(
         self,

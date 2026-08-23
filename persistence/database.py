@@ -63,10 +63,40 @@ CREATE TABLE IF NOT EXISTS conversation_sessions (
     chat_id INTEGER NOT NULL,
     messages_json TEXT NOT NULL DEFAULT '[]',
     last_consolidated INTEGER NOT NULL DEFAULT 0,
+    last_compaction_generation INTEGER NOT NULL DEFAULT 0,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (user_id, chat_id)
 );
+
+-- Immutable session context compaction ledger. Raw messages remain in
+-- conversation_sessions.messages_json and are never rewritten by compaction.
+CREATE TABLE IF NOT EXISTS session_compactions (
+    user_id INTEGER NOT NULL,
+    chat_id INTEGER NOT NULL,
+    generation INTEGER NOT NULL,
+    parent_generation INTEGER NOT NULL,
+    summary TEXT NOT NULL,
+    source_ref TEXT NOT NULL,
+    source_from_seq INTEGER NOT NULL,
+    consolidated_through_seq INTEGER NOT NULL,
+    source_message_ids_json TEXT NOT NULL,
+    retained_tail_json TEXT NOT NULL,
+    trigger TEXT NOT NULL,
+    context_window INTEGER NOT NULL,
+    soft_limit_tokens INTEGER NOT NULL,
+    hard_input_tokens INTEGER NOT NULL,
+    keep_recent_tokens INTEGER NOT NULL,
+    estimated_tokens_before INTEGER NOT NULL,
+    estimated_tokens_after INTEGER NOT NULL,
+    model TEXT NOT NULL,
+    summary_usage_json TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (user_id, chat_id, generation)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_session_compactions_source_ref
+ON session_compactions(source_ref);
 
 -- Durable async runtime queue and idempotency ledger
 CREATE TABLE IF NOT EXISTS runtime_messages (
@@ -101,6 +131,11 @@ def _ensure_conversation_session_columns(conn: sqlite3.Connection) -> None:
         conn.execute(
             "ALTER TABLE conversation_sessions "
             "ADD COLUMN last_consolidated INTEGER NOT NULL DEFAULT 0"
+        )
+    if "last_compaction_generation" not in existing:
+        conn.execute(
+            "ALTER TABLE conversation_sessions "
+            "ADD COLUMN last_compaction_generation INTEGER NOT NULL DEFAULT 0"
         )
 
 
