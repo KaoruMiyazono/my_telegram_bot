@@ -1,0 +1,18 @@
+{
+  "max_chars": {
+    "type": "integer",
+    "minimum": 1,
+    "default": 12000,
+    "description": "Maximum Unicode characters accepted in one inbound message"
+  },
+  "reject_null_bytes": {
+    "type": "boolean",
+    "default": true,
+    "description": "Reject messages containing a NUL byte"
+  },
+  "reject_control_characters": {
+    "type": "boolean",
+    "default": true,
+    "description": "Reject C0 control characters except tab, carriage return and newline"
+  }
+}

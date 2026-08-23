@@ -1,0 +1,4 @@
+name: input_safety
+version: 1.0.0
+desc: Reject malformed or oversized inbound messages before memory retrieval and reasoning
+author: Zhiyong Zheng

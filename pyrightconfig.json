@@ -9,6 +9,7 @@
     "agent/lifecycle",
     "agent/plugins",
     "agent/tool_hooks/executor.py",
+    "plugins",
     "agent/runtime",
     "agent/observability",
     "agent/pipeline/passive_turn.py",
