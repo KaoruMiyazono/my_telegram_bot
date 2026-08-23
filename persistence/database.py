@@ -117,6 +117,25 @@ ON runtime_messages(session_key, created_at);
 
 CREATE INDEX IF NOT EXISTS idx_runtime_messages_recovery
 ON runtime_messages(direction, status, created_at);
+
+-- Runtime MCP server lifecycle. config_json stores only non-secret config and
+-- environment-variable references, never bearer tokens or secret values.
+CREATE TABLE IF NOT EXISTS mcp_runtime_servers (
+    name TEXT PRIMARY KEY,
+    transport TEXT NOT NULL CHECK(transport IN ('stdio', 'streamable_http')),
+    config_json TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN (
+        'configured', 'starting', 'ready', 'draining', 'stopped', 'failed'
+    )),
+    generation INTEGER NOT NULL DEFAULT 0,
+    tool_count INTEGER NOT NULL DEFAULT 0,
+    last_error TEXT,
+    started_at TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_mcp_runtime_servers_status
+ON mcp_runtime_servers(status, updated_at);
 """
 
 

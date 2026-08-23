@@ -24,6 +24,13 @@ class Settings(BaseSettings):
     TOOL_INITIAL_SCHEMA_CHAR_BUDGET: int = 12_000
     TOOL_SESSION_LRU_SIZE: int = 4
 
+    # Generic MCP runtime
+    MCP_CONFIG_PATH: str = "./config/mcp_servers.toml"
+    MCP_STDIO_COMMAND_ALLOWLIST: str = "python,python3,node,npx,uvx"
+    MCP_CONNECT_TIMEOUT: float = 20.0
+    MCP_DRAIN_TIMEOUT: float = 10.0
+    MCP_ALLOW_LOOPBACK_HTTP: bool = True
+
     # Aliyun Embedding
     ALIYUN_DASHSCOPE_API_KEY: str
     EMBEDDING_BASE_URL: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
+from collections.abc import Sequence
 from typing import Any, Literal
 
 from agent.tools.base import Tool
@@ -77,6 +78,79 @@ class ToolRegistry:
         self._tools.pop(name, None)
         self._metadata.pop(name, None)
         self.discovery.forget_tool(name)
+
+    def replace_source_tools(
+        self,
+        *,
+        source_type: str,
+        source_name: str,
+        tools: Sequence[tuple[Tool, str]],
+    ) -> tuple[str, ...]:
+        """Atomically replace every tool published by one runtime source.
+
+        A complete candidate catalog is validated in copies first. Readers
+        therefore observe either the old MCP generation or the new one, never
+        a half-updated tools/list response.
+        """
+
+        old_names = {
+            name
+            for name, meta in self._metadata.items()
+            if meta.source_type == source_type and meta.source_name == source_name
+        }
+        new_names = [tool.name for tool, _ in tools]
+        if len(set(new_names)) != len(new_names):
+            raise ValueError(f"Duplicate tool names from source {source_name}")
+        collisions = (set(new_names) - old_names) & set(self._tools)
+        if collisions:
+            raise ValueError(
+                "Tool name collision: " + ", ".join(sorted(collisions))
+            )
+
+        next_tools = dict(self._tools)
+        next_metadata = dict(self._metadata)
+        for name in old_names:
+            next_tools.pop(name, None)
+            next_metadata.pop(name, None)
+        for tool, risk in tools:
+            next_tools[tool.name] = tool
+            next_metadata[tool.name] = ToolMeta(
+                risk=risk,
+                always_on=False,
+                search_hint=tool.description,
+                source_type=source_type,
+                source_name=source_name,
+                tier="extended",
+                preloadable=True,
+                enabled=True,
+            )
+
+        self._tools = next_tools
+        self._metadata = next_metadata
+        for name in old_names - set(new_names):
+            self.discovery.forget_tool(name)
+        return tuple(new_names)
+
+    def unregister_source(self, *, source_type: str, source_name: str) -> tuple[str, ...]:
+        """Atomically remove all tools owned by a source."""
+
+        names = tuple(
+            name
+            for name, meta in self._metadata.items()
+            if meta.source_type == source_type and meta.source_name == source_name
+        )
+        if not names:
+            return ()
+        next_tools = dict(self._tools)
+        next_metadata = dict(self._metadata)
+        for name in names:
+            next_tools.pop(name, None)
+            next_metadata.pop(name, None)
+        self._tools = next_tools
+        self._metadata = next_metadata
+        for name in names:
+            self.discovery.forget_tool(name)
+        return names
 
     def has_tool(self, name: str) -> bool:
         meta = self._metadata.get(name)

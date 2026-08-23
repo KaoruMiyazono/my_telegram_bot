@@ -4,6 +4,7 @@ from pathlib import Path
 
 from agent.core.event_bus import EventBus
 from agent.core.message_bus import MessageBus
+from agent.mcp import McpManager, register_mcp_management_tools
 from agent.pipeline.passive_turn import PassiveTurnPipeline
 from agent.pipeline.phases.after_reasoning import AfterReasoningPhase
 from agent.pipeline.phases.after_turn import AfterTurnPhase
@@ -84,6 +85,24 @@ async def main() -> None:
     register_web_tools(tool_registry)
     # Meta工具始终可见；其搜索结果只在当前Turn解锁目标Schema。
     register_tool_search(tool_registry)
+
+    # M4: preconfigured MCP servers can be registered/unregistered at runtime.
+    # Remote tools still enter the same ToolRegistry/ToolRuntime as built-ins,
+    # so Reasoner and the five-phase pipeline remain protocol-agnostic.
+    mcp_manager = McpManager.from_config(
+        registry=tool_registry,
+        config_path=settings.MCP_CONFIG_PATH,
+        allowed_commands={
+            item.strip()
+            for item in settings.MCP_STDIO_COMMAND_ALLOWLIST.split(",")
+            if item.strip()
+        },
+        allow_loopback_http=settings.MCP_ALLOW_LOOPBACK_HTTP,
+        connect_timeout=settings.MCP_CONNECT_TIMEOUT,
+        drain_timeout=settings.MCP_DRAIN_TIMEOUT,
+    )
+    register_mcp_management_tools(tool_registry, mcp_manager)
+    await mcp_manager.start()
 
     # 5. Initialize plugin runtime after built-ins, so plugin tools can override by name. 初始化插件管理
     plugin_manager = PluginManager(
@@ -178,6 +197,7 @@ async def main() -> None:
     finally:
         await adapter.stop()
         await turn_runtime.stop()
+        await mcp_manager.close()
         # Stop conversation logger
         await plugin_manager.terminate_all()
         await conversation_logger.stop()

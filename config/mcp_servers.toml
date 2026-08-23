@@ -1,0 +1,26 @@
+# M4 generic MCP runtime configuration.
+#
+# Servers are disabled by default. Runtime tools accept only names declared in
+# this file; the model cannot submit an arbitrary command or URL. Put secret
+# values in .env and reference the environment-variable name here.
+
+# [servers.exa]
+# transport = "streamable_http"
+# enabled = false
+# url = "https://mcp.exa.ai/mcp"
+# connect_timeout = 20
+# call_timeout = 30
+#
+# [servers.exa.header_refs]
+# Authorization = "EXA_AUTHORIZATION"
+
+# [servers.local_demo]
+# transport = "stdio"
+# enabled = false
+# command = "python3"
+# args = ["/absolute/path/to/server.py"]
+# connect_timeout = 20
+# call_timeout = 30
+#
+# [servers.local_demo.env_refs]
+# API_KEY = "LOCAL_DEMO_API_KEY"
