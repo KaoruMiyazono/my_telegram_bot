@@ -177,6 +177,7 @@ class ToolRegistry:
             selected = [(name, tool) for name, tool in selected if name in names]
         return [tool.to_schema() for _, tool in selected]
 
+    #  选工具 1.meta 2.根据query选出来的 3.热点工具 4.这些工具附带的
     def get_initial_schemas(self, *, query: str, session_key: str) -> list[dict[str, Any]]:
         """Project a bounded Meta + relevant Core + Session LRU tool set."""
 

@@ -4,6 +4,8 @@ from pathlib import Path
 
 from agent.core.event_bus import EventBus
 from agent.core.message_bus import MessageBus
+from agent.core.ids import build_session_key
+from agent.core.types import OutboundMessage
 from agent.mcp import McpManager, register_mcp_management_tools
 from agent.pipeline.passive_turn import PassiveTurnPipeline
 from agent.pipeline.phases.after_reasoning import AfterReasoningPhase
@@ -26,6 +28,12 @@ from persistence.database import init_db
 from persistence.session_store import get_session_store
 from persistence.runtime_message_store import RuntimeMessageStore
 from agent.runtime.turn_runtime import TurnRuntime
+from agent.tools.message_push import MessagePushTool
+from proactive_v2.agent_tick import AgentTick
+from proactive_v2.contracts import ProactivePolicy
+from proactive_v2.gateway import DataGateway
+from proactive_v2.loop import ProactiveLoop
+from proactive_v2.state import ProactiveStateStore
 
 # Configure logging
 logging.basicConfig(
@@ -191,6 +199,58 @@ async def main() -> None:
         runtime=turn_runtime,
     )
     message_bus.subscribe_outbound("telegram", adapter.send_envelope)
+    proactive_loop: ProactiveLoop | None = None
+    proactive_state: ProactiveStateStore | None = None
+    if settings.PROACTIVE_ENABLED and settings.PROACTIVE_CHAT_ID.strip():
+        proactive_user_id = (
+            settings.PROACTIVE_USER_ID.strip() or settings.PROACTIVE_CHAT_ID.strip()
+        )
+        proactive_session_key = build_session_key(
+            channel=settings.PROACTIVE_CHANNEL,
+            chat_id=settings.PROACTIVE_CHAT_ID,
+            user_id=proactive_user_id,
+        )
+        push_tool = MessagePushTool()
+
+        async def send_proactive_text(chat_id: str, content: str) -> None:
+            sent = await adapter.send(
+                OutboundMessage(chat_id=int(chat_id), content=content)
+            )
+            if not sent:
+                raise RuntimeError("Telegram delivery failed")
+
+        push_tool.register_channel("telegram", text=send_proactive_text)
+        proactive_state = ProactiveStateStore()
+        policy = ProactivePolicy(
+            threshold=settings.PROACTIVE_THRESHOLD,
+            cooldown_seconds=settings.PROACTIVE_COOLDOWN_SECONDS,
+            daily_limit=settings.PROACTIVE_DAILY_LIMIT,
+            quiet_start_hour=settings.PROACTIVE_QUIET_START_HOUR,
+            quiet_end_hour=settings.PROACTIVE_QUIET_END_HOUR,
+            timezone=settings.PROACTIVE_TIMEZONE,
+            urgent_bypass_busy=settings.PROACTIVE_URGENT_BYPASS_BUSY,
+            urgent_bypass_cooldown=settings.PROACTIVE_URGENT_BYPASS_COOLDOWN,
+            urgent_bypass_quiet=settings.PROACTIVE_URGENT_BYPASS_QUIET,
+            urgent_bypass_daily_limit=settings.PROACTIVE_URGENT_BYPASS_DAILY_LIMIT,
+            normal_interval_seconds=settings.PROACTIVE_INTERVAL_SECONDS,
+            blocked_interval_seconds=settings.PROACTIVE_BLOCKED_INTERVAL_SECONDS,
+            empty_interval_seconds=settings.PROACTIVE_EMPTY_INTERVAL_SECONDS,
+        )
+        proactive_loop = ProactiveLoop(
+            AgentTick(
+                gateway=DataGateway(),
+                push_tool=push_tool,
+                default_channel=settings.PROACTIVE_CHANNEL,
+                default_chat_id=settings.PROACTIVE_CHAT_ID,
+                user_id=proactive_user_id,
+                session_key=proactive_session_key,
+                mode="live" if settings.PROACTIVE_MODE.lower() == "live" else "shadow",
+                policy=policy,
+                state_store=proactive_state,
+                passive_busy_fn=turn_runtime.cancellation.is_active,
+            ),
+            interval_seconds=settings.PROACTIVE_INTERVAL_SECONDS,
+        )
     try:
         await turn_runtime.start()
         if settings.MEMORY_OPTIMIZER_ENABLED:
@@ -203,12 +263,19 @@ async def main() -> None:
         # Get bot info after starting
         me = await adapter.application.bot.get_me()
         logger.info(f"Bot started as @{me.username}")
+        if proactive_loop is not None:
+            proactive_loop.start()
+            logger.info("Proactive runtime started mode=%s", settings.PROACTIVE_MODE)
 
         # Keep running
         await asyncio.Event().wait()
     except asyncio.CancelledError:
         pass
     finally:
+        if proactive_loop is not None:
+            await proactive_loop.close()
+        if proactive_state is not None:
+            proactive_state.close()
         await memory_optimizer_loop.stop()
         await adapter.stop()
         await turn_runtime.stop()

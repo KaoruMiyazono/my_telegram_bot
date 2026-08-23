@@ -267,7 +267,20 @@ def _compress_tool_results(
         )
     return projected, changes
 
-
+# 它不是摘要模型，而是一个规则式压缩器。  按照token要求，压缩工具调用返回的content
+# 原始 tool result
+#       ↓
+# 抓关键 key
+#       ↓
+# 抓 URL
+#       ↓
+# 抓 error/source_ref 行
+#       ↓
+# 记录原长度 + hash
+#       ↓
+# 留下少量 excerpt （关键行）
+#       ↓
+# 短 JSON string
 def _compact_tool_content(content: str, *, max_chars: int) -> str:
     digest = _digest(content)
     urls = list(dict.fromkeys(_URL_RE.findall(content)))[:10]
@@ -352,14 +365,19 @@ def _summarize_old_history(
 ) -> tuple[list[dict[str, Any]], list[ContextChange]]:
     projected = deepcopy(list(messages))
     current_index = _last_user_index(projected)
+    #  If there are no user messages or only one, there's nothing to summarize.
+    #  第一条是 system，第二条是 user，第三条是 assistant，第四条是 user。  如果 current_index <= 1，说明没有足够的历史消息可以总结。
     if current_index <= 1:
         return projected, []
+    #  system 去掉
     history = projected[1:current_index]
     split = max(0, len(history) - keep_recent)
+    #  不是所有的历史消息都要总结，保留最近的 keep_recent 条消息。  split 是要总结的历史消息的数量。
     older = history[:split]
     retained = history[split:]
     if not older:
         return projected, []
+    #  本质上就是对长的历史对话取前260个字符
     summary = _history_summary(older, max_chars=max_chars, source_ref=source_ref)
     summary_message = {"role": "system", "content": summary}
     result = [projected[0], summary_message, *retained, *projected[current_index:]]
@@ -393,8 +411,8 @@ def _history_summary(
         if content:
             lines.append(f"- [{index}:{role}] {content[:260]}")
     return "\n".join(lines)[:max_chars]
-
-
+#  根据query，对动态的 system message 进行排序，取前两条，和静态的 system message 一起组成新的 system message
+#  再截 summary + 再压 tool
 def _build_l3_projection(
     messages: Sequence[dict[str, Any]],
     *,
@@ -567,5 +585,6 @@ def _current_user_content(messages: Sequence[dict[str, Any]]) -> str:
     return str(message.get("content") or "") if message else ""
 
 
+#  快速判断是否一样
 def _digest(content: str) -> str:
     return hashlib.sha256(content.encode("utf-8")).hexdigest()[:12]

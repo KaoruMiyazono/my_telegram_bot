@@ -45,6 +45,11 @@ jobs:
             agent/tools/web_search.py \
             agent/tools/web_fetch.py \
             agent/tools/web.py \
+            proactive_v2/contracts.py \
+            proactive_v2/stages.py \
+            proactive_v2/state.py \
+            proactive_v2/agent_tick.py \
+            proactive_v2/loop.py \
             memory/store.py \
             persistence/session_store.py \
             main.py

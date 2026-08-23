@@ -14,7 +14,8 @@
     "agent/observability",
     "agent/pipeline/passive_turn.py",
     "agent/pipeline/phases",
-    "agent/tools/runtime.py"
+    "agent/tools/runtime.py",
+    "proactive_v2"
   ],
   "exclude": [
     "tests",

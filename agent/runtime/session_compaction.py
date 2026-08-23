@@ -104,6 +104,7 @@ class PreparedSessionContext:
     compacted: bool
     checkpoint: SessionCompaction | None
     trace: dict[str, Any]
+# [系统指令] + [旧记忆简报] + [近期原始对话] 根据预算确定边界，什么生成摘要，什么作为原始对话。记忆简报是有固定格式的，看上面。
 
 
 class SessionContextCompactor:
@@ -149,6 +150,7 @@ class SessionContextCompactor:
         """Project an active checkpoint and compact when soft/hard budget is hit."""
 
         raw_tokens = estimate_context_tokens(messages, tools)
+        # 第一次调用 prepare() 时，确认当前传给模型的消息和原始 Session 能对上；如果数据库已有压缩代次，就把完整旧历史替换成“摘要 + 最近原文”。
         self._initialize_projection(messages)
         estimated = estimate_context_tokens(messages, tools)
         boundary_hit = (
@@ -280,7 +282,7 @@ class SessionContextCompactor:
                 retained_units=len(retained),
             ),
         )
-
+    # 它确保数据库层永远拥有完整记忆，同时在 LLM 接口层切换为更省 Token 的临时视图。
     def _initialize_projection(self, messages: list[dict[str, Any]]) -> None:
         if self._projection_initialized:
             return
@@ -321,11 +323,13 @@ class SessionContextCompactor:
         self,
         messages: Sequence[dict[str, Any]],
     ) -> list[tuple[int, dict[str, Any]]]:
+        # 如果当前没有活动的上下文切片（_active 为空），说明系统不需要做特殊拼接。 直接遍历全量原始消息 self._raw_session_messages，用 enumerate 生成从 0 开始的 seq 序号，并用 deepcopy 复制消息。
         if self._active is None:
             return [
                 (seq, deepcopy(message))
                 for seq, message in enumerate(self._raw_session_messages)
             ]
+        # 第一次调用 prepare() 时，确认当前传给模型的消息和原始 Session 能对上；如果数据库已有压缩代次，就把完整旧历史替换成“摘要 + 最近原文”。
         return [
             (int(item["seq"]), deepcopy(item["message"]))
             for item in _active_tail_with_new_messages(

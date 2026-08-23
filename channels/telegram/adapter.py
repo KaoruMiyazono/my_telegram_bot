@@ -133,11 +133,11 @@ class TelegramAdapter:
     async def send_envelope(self, envelope: MessageEnvelope) -> None:
         await self.send(envelope.as_outbound())
 
-    async def send(self, message) -> None:
+    async def send(self, message) -> bool:
         """Send message via Telegram (called by AfterTurnPhase). Retries on network errors."""
         if not self.application:
             logger.error("send() called but application is None — message dropped")
-            return
+            return False
 
         max_retries = 3
         for attempt in range(max_retries):
@@ -146,7 +146,7 @@ class TelegramAdapter:
                     chat_id=message.chat_id,
                     text=message.content,
                 )
-                return
+                return True
             except RetryAfter as e:
                 delay = float(getattr(e, "retry_after", 1.0) or 1.0) + 1.0
                 logger.warning(
@@ -167,6 +167,7 @@ class TelegramAdapter:
             "send_message FAILED after %d attempts  chat_id=%s  text=%.100s",
             max_retries, message.chat_id, message.content,
         )
+        return False
 
     async def start(self) -> None:
         """Start the bot with polling."""

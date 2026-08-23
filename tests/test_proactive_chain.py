@@ -7,6 +7,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from agent.tools.message_push import MessagePushTool
 from agent.tools.registry import ToolRegistry
 from proactive_v2.agent_tick import AgentTick, ProactiveDecision
+from proactive_v2.contracts import ProactivePolicy
 from proactive_v2.gateway import DataGateway
 from proactive_v2.loop import ProactiveLoop
 
@@ -95,6 +96,7 @@ async def test_agent_tick_pushes_alert():
         push_tool=push,
         default_channel="telegram",
         default_chat_id="42",
+        policy=ProactivePolicy(quiet_start_hour=0, quiet_end_hour=0),
     )
     result = await tick.tick()
 
@@ -129,6 +131,7 @@ async def test_proactive_loop_run_once_uses_agent_tick():
             default_channel="telegram",
             default_chat_id="42",
             decision_fn=decide,
+            policy=ProactivePolicy(quiet_start_hour=0, quiet_end_hour=0),
         ),
         interval_seconds=1,
     )

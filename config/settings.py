@@ -26,6 +26,26 @@ class Settings(BaseSettings):
     MEMORY_OPTIMIZER_ENABLED: bool = True
     MEMORY_OPTIMIZER_INTERVAL_SECONDS: float = 900.0
 
+    # M8 proactive runtime (disabled until a target is configured explicitly)
+    PROACTIVE_ENABLED: bool = False
+    PROACTIVE_MODE: str = "shadow"
+    PROACTIVE_CHANNEL: str = "telegram"
+    PROACTIVE_CHAT_ID: str = ""
+    PROACTIVE_USER_ID: str = ""
+    PROACTIVE_THRESHOLD: float = 0.6
+    PROACTIVE_INTERVAL_SECONDS: int = 300
+    PROACTIVE_BLOCKED_INTERVAL_SECONDS: int = 60
+    PROACTIVE_EMPTY_INTERVAL_SECONDS: int = 600
+    PROACTIVE_COOLDOWN_SECONDS: int = 3600
+    PROACTIVE_DAILY_LIMIT: int = 3
+    PROACTIVE_QUIET_START_HOUR: int = 22
+    PROACTIVE_QUIET_END_HOUR: int = 8
+    PROACTIVE_TIMEZONE: str = "Asia/Shanghai"
+    PROACTIVE_URGENT_BYPASS_BUSY: bool = False
+    PROACTIVE_URGENT_BYPASS_COOLDOWN: bool = True
+    PROACTIVE_URGENT_BYPASS_QUIET: bool = True
+    PROACTIVE_URGENT_BYPASS_DAILY_LIMIT: bool = False
+
     # Generic MCP runtime
     MCP_CONFIG_PATH: str = "./config/mcp_servers.toml"
     MCP_STDIO_COMMAND_ALLOWLIST: str = "python,python3,node,npx,uvx"
