@@ -4,7 +4,7 @@ Deterministic RAG layer smoke checks.
 This is intentionally separate from the live RAG eval runner. It does not call
 DeepSeek or DashScope; instead it verifies the two lifecycle behaviors that must
 keep working in CI:
-  1. consolidation advances the window and writes a structured memory
+  1. consolidation writes PENDING first, then optimizer commits Markdown/vector
   2. invalidation retires an explicitly corrected old memory
 """
 
@@ -31,6 +31,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from agent.core.types import Session
 from agent.pipeline.consolidation_worker import ConsolidationWorker
 from agent.pipeline.invalidation_worker import InvalidationWorker
+from memory.markdown_store import MarkdownMemoryStore
+from memory.markdown_vector_sync import MarkdownVectorSync
+from memory.optimizer import MemoryOptimizer, TextResponse
 from memory.store import MemoryStore
 from persistence.database import init_db
 
@@ -40,11 +43,11 @@ class _FakeEmbedder:
         return [0.1] * 1024
 
 
-def _active_rows(user_id: int) -> list[tuple[str, str, str]]:
+def _active_rows(user_id: int) -> list[tuple[str, str, str, str | None]]:
     conn = sqlite3.connect(os.environ["DATABASE_PATH"])
     rows = conn.execute(
         """
-        SELECT id, memory_type, summary
+        SELECT id, memory_type, summary, source_ref
         FROM memory_items
         WHERE user_id = ? AND status = 'active'
         ORDER BY created_at
@@ -71,7 +74,12 @@ def _status_by_summary(user_id: int) -> dict[str, str]:
 
 async def _check_consolidation_window() -> dict[str, object]:
     store = MemoryStore(_FakeEmbedder())
-    worker = ConsolidationWorker(keep_count=10, min_new_messages=6)
+    markdown = MarkdownMemoryStore(Path(tempfile.mkdtemp(prefix="rag-smoke-memory-")))
+    worker = ConsolidationWorker(
+        keep_count=10,
+        min_new_messages=6,
+        markdown_store=markdown,
+    )
     session = Session(
         user_id=7001,
         chat_id=7001,
@@ -91,16 +99,56 @@ async def _check_consolidation_window() -> dict[str, object]:
     )
 
     assert worker.should_consolidate(session)
+    stable_hash_before = markdown.stable_prompt_hash(7001)
     written = await worker.consolidate(session, store, user_id=7001, chat_id=7001)
-    rows = _active_rows(7001)
+    pending = markdown.read_pending(7001)
+    rows_before_optimize = _active_rows(7001)
 
     assert written == 1
     assert session.last_consolidated == 6
-    assert rows == [(rows[0][0], "preference", "用户喜欢喝茶。")]
+    assert rows_before_optimize == []
+    assert "用户喜欢喝茶。" in pending
+    assert "[↗session:7001:7001#msg:0-5]" in pending
+    assert markdown.stable_prompt_hash(7001) == stable_hash_before
+
+    provider = AsyncMock()
+    provider.chat = AsyncMock(
+        side_effect=[
+            TextResponse(
+                "# Long-term Memory\n\n"
+                "## User Preferences\n"
+                "- 用户喜欢喝茶。\n"
+            ),
+            TextResponse("# Self Model\n\n## Persona\n- 稳定、可靠。\n"),
+        ]
+    )
+    optimizer = MemoryOptimizer(
+        markdown,
+        provider,
+        "test-model",
+        vector_sync=MarkdownVectorSync(store),
+    )
+    optimized = await optimizer.optimize(7001)
+    rows_after_optimize = _active_rows(7001)
+
+    assert optimized.status == "merged"
+    assert markdown.read_pending(7001) == ""
+    assert markdown.stable_prompt_hash(7001) != stable_hash_before
+    assert len(rows_after_optimize) == 1
+    assert rows_after_optimize == [
+        (
+            rows_after_optimize[0][0],
+            "preference",
+            "用户喜欢喝茶。",
+            "session:7001:7001#msg:0-5",
+        )
+    ]
     return {
-        "written": written,
+        "pending_candidates": written,
         "last_consolidated": session.last_consolidated,
-        "active_memories": len(rows),
+        "active_before_optimizer": len(rows_before_optimize),
+        "active_after_optimizer": len(rows_after_optimize),
+        "optimizer_status": optimized.status,
     }
 
 
