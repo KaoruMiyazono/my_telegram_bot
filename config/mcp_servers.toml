@@ -4,13 +4,15 @@
 # this file; the model cannot submit an arbitrary command or URL. Put secret
 # values in .env and reference the environment-variable name here.
 
-# [servers.exa]
-# transport = "streamable_http"
-# enabled = false
-# url = "https://mcp.exa.ai/mcp"
-# connect_timeout = 20
-# call_timeout = 30
-#
+[servers.exa]
+transport = "streamable_http"
+enabled = true
+url = "https://mcp.exa.ai/mcp"
+connect_timeout = 20
+call_timeout = 30
+
+# Exa's public MCP endpoint currently works without authentication. If Exa
+# later requires a key, keep the value in .env and reference its name here:
 # [servers.exa.header_refs]
 # Authorization = "EXA_AUTHORIZATION"
 

@@ -11,7 +11,7 @@ import pytest
 from agent.mcp.client import McpCallResult, McpToolInfo
 from agent.mcp.host import McpGenerationStaleError
 from agent.mcp.manager import McpManager, register_mcp_management_tools
-from agent.mcp.spec import McpServerSpec
+from agent.mcp.spec import McpServerSpec, load_mcp_specs
 from agent.mcp.state import McpRuntimeStateStore
 from agent.tools.registry import ToolRegistry
 from persistence.database import get_connection, init_db
@@ -229,3 +229,14 @@ def test_management_tools_accept_only_preconfigured_server_names() -> None:
     assert schema["properties"]["server_name"]["enum"] == ["demo"]
     assert "command" not in schema["properties"]
     assert "url" not in schema["properties"]
+
+
+def test_shipped_exa_mcp_config_is_enabled_and_safe() -> None:
+    config_path = Path(__file__).parent.parent / "config" / "mcp_servers.toml"
+    specs = load_mcp_specs(config_path)
+    exa = specs["exa"]
+    assert exa.enabled is True
+    assert exa.transport == "streamable_http"
+    assert exa.url == "https://mcp.exa.ai/mcp"
+    assert exa.header_refs == {}
+    exa.validate(allowed_commands=set(), allow_loopback_http=True)
