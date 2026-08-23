@@ -2,7 +2,7 @@ import asyncio
 import logging
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any, Callable, cast
 
 logger = logging.getLogger(__name__)
 
@@ -12,6 +12,13 @@ class _TypedHandler:
     ctx_type: type
     handler: Callable
     priority: int = 0
+
+
+@dataclass(frozen=True)
+class EventSubscription:
+    kind: str
+    event_type: str | type
+    handler: Callable
 
 
 class EventBus:
@@ -43,12 +50,16 @@ class EventBus:
             cls._instance = cls()
         return cls._instance
 
-    def subscribe(self, event_type: str, handler: Callable) -> None:
+    def subscribe(self, event_type: str, handler: Callable) -> EventSubscription:
         self._subscribers[event_type].append(handler)
+        return EventSubscription("string", event_type, handler)
 
-    def on(self, ctx_type: type, handler: Callable, *, priority: int = 0) -> None:
+    def on(
+        self, ctx_type: type, handler: Callable, *, priority: int = 0
+    ) -> EventSubscription:
         """Register an Akashic-style GATE lifecycle handler."""
         self._append_typed_handler(self._gate_handlers, ctx_type, handler, priority)
+        return EventSubscription("gate", ctx_type, handler)
 
     def observe(
         self,
@@ -64,8 +75,25 @@ class EventBus:
         """
         if handler is not None:
             self._append_typed_handler(self._tap_handlers, event_or_type, handler, priority)
-            return None
+            return EventSubscription("tap", event_or_type, handler)
         return self._observe_event(event_or_type)
+
+    def unsubscribe(self, subscription: EventSubscription) -> bool:
+        """Remove exactly one prior subscription; safe to call repeatedly."""
+        if subscription.kind == "string":
+            handlers = self._subscribers.get(str(subscription.event_type), [])
+            try:
+                handlers.remove(subscription.handler)
+            except ValueError:
+                return False
+            return True
+        target = self._gate_handlers if subscription.kind == "gate" else self._tap_handlers
+        handlers = target.get(cast(type, subscription.event_type), [])
+        for item in list(handlers):
+            if item.handler is subscription.handler:
+                handlers.remove(item)
+                return True
+        return False
 
     async def emit(self, event_or_type: Any, **data: Any) -> Any:
         if isinstance(event_or_type, str):

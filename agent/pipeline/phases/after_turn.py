@@ -29,7 +29,7 @@ class AfterTurnPhase:
     ) -> None:
         self.event_bus = event_bus
         self.telegram_adapter = telegram_adapter
-        self.plugin_modules = list(plugin_modules or [])
+        self.plugin_modules = plugin_modules if plugin_modules is not None else ()
         self.deferred_dispatch = deferred_dispatch
 
     async def execute(

@@ -27,7 +27,7 @@ class AfterReasoningPhase:
     ) -> None:
         self.store = store
         self.event_bus = event_bus or EventBus.get_instance()
-        self.plugin_modules = list(plugin_modules or [])
+        self.plugin_modules = plugin_modules if plugin_modules is not None else ()
 
     async def build_ctx(
         self,

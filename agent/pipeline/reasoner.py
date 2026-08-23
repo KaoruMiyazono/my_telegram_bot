@@ -169,8 +169,8 @@ class Reasoner:
         before_step: Sequence[object] | None = None,
         after_step: Sequence[object] | None = None,
     ) -> None:
-        self._before_step_modules = list(before_step or [])
-        self._after_step_modules = list(after_step or [])
+        self._before_step_modules = before_step if before_step is not None else ()
+        self._after_step_modules = after_step if after_step is not None else ()
 
     def add_tool_hooks(self, hooks) -> None:
         self._tool_executor.add_hooks(hooks)

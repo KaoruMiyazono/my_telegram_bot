@@ -113,7 +113,7 @@ async def main() -> None:
         memory_engine=memory_runtime.engine,
     )
     await plugin_manager.load_all()
-    tool_executor.add_hooks(plugin_manager.tool_hooks)
+    plugin_manager.attach_tool_executor(tool_executor)
     reasoner.set_step_modules(
         before_step=plugin_manager.before_step_modules,
         after_step=plugin_manager.after_step_modules,

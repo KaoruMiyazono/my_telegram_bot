@@ -53,6 +53,11 @@ class ToolExecutor:
     def add_hooks(self, hooks: Sequence[ToolHook]) -> None:
         self._hooks[-1:-1] = list(hooks)
 
+    def remove_hooks(self, hooks: Sequence[ToolHook]) -> None:
+        """Remove plugin-owned hooks by identity while preserving built-ins."""
+        identities = {id(hook) for hook in hooks}
+        self._hooks = [hook for hook in self._hooks if id(hook) not in identities]
+
     async def execute(
         self,
         request: ToolExecutionRequest,

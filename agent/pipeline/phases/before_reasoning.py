@@ -300,8 +300,10 @@ class BeforeReasoningPhase:
         self.benchmark_mode = benchmark_mode
         self.tool_registry = tool_registry
         self.event_bus = event_bus or EventBus.get_instance()
-        self.plugin_modules = list(plugin_modules or [])
-        self.prompt_render_modules = list(prompt_render_modules or [])
+        self.plugin_modules = plugin_modules if plugin_modules is not None else ()
+        self.prompt_render_modules = (
+            prompt_render_modules if prompt_render_modules is not None else ()
+        )
         self.prompt_builder = prompt_builder or default_system_prompt_builder(
             _BENCHMARK_MEMORY_PROMPT,
             self_model_reader=self_model_reader,

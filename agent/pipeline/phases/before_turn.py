@@ -35,7 +35,7 @@ class BeforeTurnPhase:
         plugin_modules: Sequence[Any] | None = None,
     ) -> None:
         self.event_bus = event_bus or EventBus.get_instance()
-        self.plugin_modules = list(plugin_modules or [])
+        self.plugin_modules = plugin_modules if plugin_modules is not None else ()
         self.memory_engine = memory_engine
         #  最新一轮检索到的记忆
         self.last_retrieved: list[MemoryItem] = []

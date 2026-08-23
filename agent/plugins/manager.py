@@ -6,10 +6,17 @@ import inspect
 import json
 import logging
 import sys
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, cast
 
-from agent.core.event_bus import EventBus
+from agent.core.event_bus import EventBus, EventSubscription
+from agent.lifecycle.phase import (
+    CompiledPhaseModules,
+    PHASE_NAMES,
+    PhaseGraph,
+    compile_phase_modules,
+)
 from agent.lifecycle.types import (
     AfterReasoningCtx,
     AfterStepCtx,
@@ -24,10 +31,19 @@ from agent.lifecycle.types import (
 )
 from agent.plugins.registry import HandlerType, MetadataKind, PluginEventType, plugin_registry
 from agent.tool_hooks.base import ToolHook
-from agent.tool_hooks.types import HookContext, HookOutcome
+from agent.tool_hooks.types import HookContext, HookEvent, HookOutcome
 from agent.tools.base import Tool
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class _PluginResources:
+    plugin_id: str
+    tools: list[str] = field(default_factory=list)
+    hooks: list[ToolHook] = field(default_factory=list)
+    subscriptions: list[EventSubscription] = field(default_factory=list)
+    phase_modules: dict[str, list[object]] = field(default_factory=dict)
 
 _EVENT_TYPE_MAP: dict[PluginEventType, type] = {
     PluginEventType.BEFORE_TURN: BeforeTurnCtx,
@@ -66,6 +82,11 @@ class PluginManager:
         self._after_step_modules: list[object] = []
         self._after_reasoning_modules: list[object] = []
         self._after_turn_modules: list[object] = []
+        self._phase_plans = {
+            phase_name: CompiledPhaseModules(phase_name) for phase_name in PHASE_NAMES
+        }
+        self._resources: dict[str, _PluginResources] = {}
+        self._tool_executor: Any = None
 
     @property
     def loaded_count(self) -> int:
@@ -76,32 +97,43 @@ class PluginManager:
         return list(self._tool_hooks)
 
     @property
-    def before_turn_modules(self) -> list[object]:
-        return list(self._before_turn_modules)
+    def before_turn_modules(self) -> CompiledPhaseModules:
+        return self._phase_plans["before_turn"]
 
     @property
-    def before_reasoning_modules(self) -> list[object]:
-        return list(self._before_reasoning_modules)
+    def before_reasoning_modules(self) -> CompiledPhaseModules:
+        return self._phase_plans["before_reasoning"]
 
     @property
-    def prompt_render_modules(self) -> list[object]:
-        return list(self._prompt_render_modules)
+    def prompt_render_modules(self) -> CompiledPhaseModules:
+        return self._phase_plans["prompt_render"]
 
     @property
-    def before_step_modules(self) -> list[object]:
-        return list(self._before_step_modules)
+    def before_step_modules(self) -> CompiledPhaseModules:
+        return self._phase_plans["before_step"]
 
     @property
-    def after_step_modules(self) -> list[object]:
-        return list(self._after_step_modules)
+    def after_step_modules(self) -> CompiledPhaseModules:
+        return self._phase_plans["after_step"]
 
     @property
-    def after_reasoning_modules(self) -> list[object]:
-        return list(self._after_reasoning_modules)
+    def after_reasoning_modules(self) -> CompiledPhaseModules:
+        return self._phase_plans["after_reasoning"]
 
     @property
-    def after_turn_modules(self) -> list[object]:
-        return list(self._after_turn_modules)
+    def after_turn_modules(self) -> CompiledPhaseModules:
+        return self._phase_plans["after_turn"]
+
+    @property
+    def phase_graphs(self) -> dict[str, dict[str, object]]:
+        return {
+            name: plan.graph.to_dict() for name, plan in self._phase_plans.items()
+        }
+
+    def attach_tool_executor(self, executor: Any) -> None:
+        """Keep runtime hook installation/removal aligned with plugin lifetime."""
+        self._tool_executor = executor
+        executor.add_hooks(self._tool_hooks)
 
     def discover(self) -> list[dict[str, str]]:
         mods: list[dict[str, str]] = []
@@ -133,25 +165,33 @@ class PluginManager:
 
     async def terminate_all(self) -> None:
         for module_path in list(self._loaded):
-            instance = plugin_registry.get_instance(module_path)
-            if instance is not None and hasattr(instance, "terminate"):
-                try:
-                    await instance.terminate()
-                except Exception as exc:
-                    logger.warning("插件 terminate 失败 (%s): %s", module_path, exc)
-            for md in plugin_registry.get_handlers_by_module_path(module_path):
-                if md.kind == MetadataKind.TOOL and self._tool_registry is not None:
-                    self._tool_registry.unregister(md.tool_name or md.handler_name)
-            plugin_registry.remove_plugin(module_path)
-        self._loaded.clear()
-        self._tool_hooks.clear()
-        self._before_turn_modules.clear()
-        self._before_reasoning_modules.clear()
-        self._prompt_render_modules.clear()
-        self._before_step_modules.clear()
-        self._after_step_modules.clear()
-        self._after_reasoning_modules.clear()
-        self._after_turn_modules.clear()
+            await self.unload(module_path)
+
+    async def unload(self, plugin: str) -> bool:
+        """Unload one plugin and every resource it registered."""
+        module_path = next(
+            (
+                path
+                for path, resources in self._resources.items()
+                if path == plugin or resources.plugin_id == plugin
+            ),
+            None,
+        )
+        if module_path is None:
+            return False
+        instance = plugin_registry.get_instance(module_path)
+        if instance is not None and hasattr(instance, "terminate"):
+            try:
+                await cast(Any, instance).terminate()
+            except Exception as exc:
+                logger.warning("插件 terminate 失败 (%s): %s", module_path, exc)
+        self._remove_resources(module_path, self._resources[module_path])
+        plugin_registry.remove_plugin(module_path)
+        self._resources.pop(module_path, None)
+        self._loaded.discard(module_path)
+        self._compile_phase_graphs()
+        logger.info("插件已卸载: %s", plugin)
+        return True
 
     async def _load_one(self, mod: dict[str, str]) -> None:
         module_path = mod["import_path"]
@@ -187,28 +227,31 @@ class PluginManager:
         )
         plugin_registry.register_instance(module_path, instance)
 
-        self._bind_handlers(instance, module_path)
-        tool_names = self._register_tools(instance, module_path)
-        hook_count_before = len(self._tool_hooks)
-        self._bind_tool_hooks(instance, module_path)
-        module_counts_before = self._module_counts()
-        self._collect_phase_modules(instance)
-
+        resources = _PluginResources(plugin_id=plugin_id)
         try:
+            resources.subscriptions = self._bind_handlers(instance, module_path)
+            resources.tools = self._register_tools(instance, module_path)
+            resources.hooks = self._bind_tool_hooks(instance, module_path)
+            resources.phase_modules = self._collect_phase_modules(instance)
+            self._compile_phase_graphs()
             if hasattr(instance, "initialize"):
                 await instance.initialize()
         except Exception as exc:
             logger.warning("插件 %s 初始化失败，回滚: %s", mod["name"], exc)
+            self._remove_resources(module_path, resources)
+            self._compile_phase_graphs()
             plugin_registry.remove_plugin(module_path)
-            for tool_name in tool_names:
-                if self._tool_registry is not None:
-                    self._tool_registry.unregister(tool_name)
-            del self._tool_hooks[hook_count_before:]
-            self._rollback_phase_modules(module_counts_before)
             return
 
+        self._resources[module_path] = resources
         self._loaded.add(module_path)
-        logger.info("插件已加载: %s", mod["name"])
+        if self._tool_executor is not None:
+            self._tool_executor.add_hooks(resources.hooks)
+        logger.info(
+            "插件已加载: %s lifecycle_dag=%s",
+            mod["name"],
+            json.dumps(self.phase_graphs, ensure_ascii=False, sort_keys=True),
+        )
 
     def _import_plugin(self, module_name: str, path: Path) -> None:
         spec = importlib.util.spec_from_file_location(
@@ -222,7 +265,10 @@ class PluginManager:
         sys.modules[module_name] = module
         spec.loader.exec_module(module)
 
-    def _bind_handlers(self, instance: Any, module_path: str) -> None:
+    def _bind_handlers(
+        self, instance: Any, module_path: str
+    ) -> list[EventSubscription]:
+        subscriptions: list[EventSubscription] = []
         for md in plugin_registry.get_handlers_by_module_path(module_path):
             if md.kind != MetadataKind.LIFECYCLE or md.event_type is None:
                 continue
@@ -231,9 +277,16 @@ class PluginManager:
                 continue
             bound = functools.partial(md.handler, instance)
             if md.handler_type == HandlerType.TAP:
-                self._event_bus.observe(ctx_type, bound, priority=md.priority)
+                subscription = self._event_bus.observe(
+                    ctx_type, bound, priority=md.priority
+                )
             else:
-                self._event_bus.on(ctx_type, bound, priority=md.priority)
+                subscription = self._event_bus.on(
+                    ctx_type, bound, priority=md.priority
+                )
+            if isinstance(subscription, EventSubscription):
+                subscriptions.append(subscription)
+        return subscriptions
 
     def _register_tools(self, instance: Any, module_path: str) -> list[str]:
         tool_names: list[str] = []
@@ -277,53 +330,64 @@ class PluginManager:
             tool_names.append(tool_name)
         return tool_names
 
-    def _bind_tool_hooks(self, instance: Any, module_path: str) -> None:
+    def _bind_tool_hooks(self, instance: Any, module_path: str) -> list[ToolHook]:
+        hooks: list[ToolHook] = []
         for md in plugin_registry.get_handlers_by_module_path(module_path):
             if md.kind != MetadataKind.TOOL_HOOK:
                 continue
             bound = functools.partial(md.handler, instance)
-            self._tool_hooks.append(
-                _PluginToolHook(
+            hook = _PluginToolHook(
                     name=f"plugin:{getattr(instance, 'name', module_path)}:{md.handler_name}",
                     handler=bound,
                     tool_name_filter=md.hook_tool_name,
                     event=_hook_event(md.event_type),
                 )
-            )
+            hooks.append(hook)
+            self._tool_hooks.append(hook)
+        return hooks
 
-    def _collect_phase_modules(self, instance: Any) -> None:
-        self._before_turn_modules.extend(_load_module_list(instance, "before_turn_modules"))
-        self._before_reasoning_modules.extend(
-            _load_module_list(instance, "before_reasoning_modules")
-        )
-        self._prompt_render_modules.extend(_load_module_list(instance, "prompt_render_modules"))
-        self._before_step_modules.extend(_load_module_list(instance, "before_step_modules"))
-        self._after_step_modules.extend(_load_module_list(instance, "after_step_modules"))
-        self._after_reasoning_modules.extend(
-            _load_module_list(instance, "after_reasoning_modules")
-        )
-        self._after_turn_modules.extend(_load_module_list(instance, "after_turn_modules"))
-
-    def _module_counts(self) -> dict[str, int]:
-        return {
-            "before_turn": len(self._before_turn_modules),
-            "before_reasoning": len(self._before_reasoning_modules),
-            "prompt_render": len(self._prompt_render_modules),
-            "before_step": len(self._before_step_modules),
-            "after_step": len(self._after_step_modules),
-            "after_reasoning": len(self._after_reasoning_modules),
-            "after_turn": len(self._after_turn_modules),
+    def _collect_phase_modules(self, instance: Any) -> dict[str, list[object]]:
+        # Providers are evaluated before mutating live lists.  If any provider
+        # fails, no earlier phase from the same plugin leaks into the runtime.
+        collected = {
+            phase_name: _load_module_list(instance, f"{phase_name}_modules")
+            for phase_name in PHASE_NAMES
         }
+        for phase_name, loaded in collected.items():
+            self._module_list(phase_name).extend(loaded)
+        return collected
 
-    def _rollback_phase_modules(self, counts: dict[str, int]) -> None:
-        del self._before_turn_modules[counts["before_turn"]:]
-        del self._before_reasoning_modules[counts["before_reasoning"]:]
-        del self._prompt_render_modules[counts["prompt_render"]:]
-        del self._before_step_modules[counts["before_step"]:]
-        del self._after_step_modules[counts["after_step"]:]
-        del self._after_reasoning_modules[counts["after_reasoning"]:]
-        del self._after_turn_modules[counts["after_turn"]:]
+    def _module_list(self, phase_name: str) -> list[object]:
+        return cast(list[object], getattr(self, f"_{phase_name}_modules"))
 
+    def _compile_phase_graphs(self) -> None:
+        # Compile all candidates first.  A failure leaves every live plan on
+        # its previous valid generation.
+        graphs: dict[str, PhaseGraph] = {
+            name: compile_phase_modules(self._module_list(name), phase_name=name)
+            for name in PHASE_NAMES
+        }
+        for name, graph in graphs.items():
+            self._phase_plans[name].graph = graph
+
+    def _remove_resources(
+        self, module_path: str, resources: _PluginResources
+    ) -> None:
+        for subscription in resources.subscriptions:
+            self._event_bus.unsubscribe(subscription)
+        for tool_name in resources.tools:
+            if self._tool_registry is not None:
+                self._tool_registry.unregister(tool_name)
+        if self._tool_executor is not None:
+            self._tool_executor.remove_hooks(resources.hooks)
+        hook_ids = {id(hook) for hook in resources.hooks}
+        self._tool_hooks[:] = [
+            hook for hook in self._tool_hooks if id(hook) not in hook_ids
+        ]
+        for phase_name, modules in resources.phase_modules.items():
+            module_ids = {id(module) for module in modules}
+            target = self._module_list(phase_name)
+            target[:] = [module for module in target if id(module) not in module_ids]
 
 def _accepted_tool_params(bound: Callable[..., Any]) -> frozenset[str]:
     sig = inspect.signature(bound)
@@ -335,18 +399,12 @@ def _load_module_list(instance: Any, method_name: str) -> list[object]:
     if provider is None:
         return []
     if not callable(provider):
-        logger.warning("插件 %s.%s 不是可调用对象", type(instance).__name__, method_name)
-        return []
-    try:
-        loaded = provider()
-    except Exception as exc:
-        logger.warning("插件 %s.%s 加载失败: %s", type(instance).__name__, method_name, exc)
-        return []
+        raise TypeError(f"插件 {type(instance).__name__}.{method_name} 不是可调用对象")
+    loaded = provider()
     if loaded is None:
         return []
     if not isinstance(loaded, list):
-        logger.warning("插件 %s.%s 返回值不是 list", type(instance).__name__, method_name)
-        return []
+        raise TypeError(f"插件 {type(instance).__name__}.{method_name} 返回值不是 list")
     return loaded
 
 
@@ -357,7 +415,7 @@ class _PluginToolHook(ToolHook):
         name: str,
         handler: Callable[..., Any],
         tool_name_filter: str | None,
-        event: str,
+        event: HookEvent,
     ) -> None:
         self.name = name
         self.event = event
@@ -409,13 +467,16 @@ class _PluginToolHook(ToolHook):
         )
 
 
-def _hook_event(event_type: PluginEventType | None) -> str:
-    return {
+def _hook_event(event_type: PluginEventType | None) -> HookEvent:
+    mapping: dict[PluginEventType, HookEvent] = {
         PluginEventType.PRE_TOOL: "before_call",
         PluginEventType.POST_TOOL: "after_call",
         PluginEventType.TOOL_ERROR: "on_error",
         PluginEventType.TOOL_CANCEL: "on_cancel",
-    }.get(event_type, "before_call")
+    }
+    if event_type is None:
+        return "before_call"
+    return mapping.get(event_type, "before_call")
 
 
 def _load_plugin_config(plugin_dir: Path) -> Any:
