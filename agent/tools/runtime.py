@@ -6,7 +6,9 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+from agent.tool_hooks.errors import ToolRuntimeTimeoutError
 from agent.tool_hooks.executor import ToolExecutor
+from agent.tool_hooks.redaction import redact_sensitive
 from agent.tool_hooks.types import HookTraceItem, ToolExecutionRequest
 from agent.tools.base import Tool, ToolResult
 from agent.tools.registry import ToolMeta, ToolRegistry
@@ -20,6 +22,10 @@ ToolRuntimeErrorCode = Literal[
     "policy_check",
     "tool_invoke",
     "timeout",
+    "network_error",
+    "mcp_unavailable",
+    "business_error",
+    "cancelled",
     "hook_error",
     "output_validation",
     "unknown",
@@ -57,6 +63,10 @@ class ToolRuntimeResult:
     extra_messages: list[str] = field(default_factory=list)
     pre_hook_trace: list[HookTraceItem] = field(default_factory=list)
     post_hook_trace: list[HookTraceItem] = field(default_factory=list)
+    error_hook_trace: list[HookTraceItem] = field(default_factory=list)
+    cancel_hook_trace: list[HookTraceItem] = field(default_factory=list)
+    audit_metadata: dict[str, Any] = field(default_factory=dict)
+    exception_type: str = ""
     turn_id: str = ""
     trace_id: str = ""
 
@@ -64,40 +74,43 @@ class ToolRuntimeResult:
         payload: dict[str, Any] = {
             "ok": self.ok,
             "status": self.status,
-            "data": self.data if self.ok else None,
+            "data": redact_sensitive(self.data) if self.ok else None,
             "error": None,
             "meta": {
                 "tool_name": self.tool_name,
                 "call_id": self.call_id,
                 "duration_ms": self.duration_ms,
                 "retry_count": self.retry_count,
-                "final_arguments": self.final_arguments,
+                "final_arguments": redact_sensitive(self.final_arguments),
                 "turn_id": self.turn_id,
                 "trace_id": self.trace_id,
             },
         }
         if self.data_text:
-            payload["data_text"] = self.data_text
+            payload["data_text"] = redact_sensitive(self.data_text)
         if self.extra_messages:
-            payload["meta"]["extra_messages"] = list(self.extra_messages)
+            payload["meta"]["extra_messages"] = redact_sensitive(self.extra_messages)
         if self.pre_hook_trace:
             payload["meta"]["pre_hook_trace"] = _serialize_trace(self.pre_hook_trace)
         if self.post_hook_trace:
             payload["meta"]["post_hook_trace"] = _serialize_trace(self.post_hook_trace)
+        if self.error_hook_trace:
+            payload["meta"]["error_hook_trace"] = _serialize_trace(self.error_hook_trace)
+        if self.cancel_hook_trace:
+            payload["meta"]["cancel_hook_trace"] = _serialize_trace(self.cancel_hook_trace)
+        if self.audit_metadata:
+            payload["meta"]["audit_metadata"] = redact_sensitive(self.audit_metadata)
         if not self.ok:
             payload["error"] = {
                 "code": self.error_code or "unknown",
-                "message": self.message,
+                "message": redact_sensitive(self.message),
                 "retryable": self.retryable,
+                "exception_type": self.exception_type,
             }
         return payload
 
     def to_json(self) -> str:
         return json.dumps(self.to_envelope(), ensure_ascii=False)
-
-
-class ToolRuntimeTimeoutError(RuntimeError):
-    pass
 
 
 class ToolRuntime:
@@ -175,26 +188,17 @@ class ToolRuntime:
                 ),
                 retryable=False,
             ))
-        #  看看参数和function定义是否冲突
-        validation_errors = validate_json_schema(arguments, tool.parameters)
-        if validation_errors:
-            return finish(self._error(
-                started=started,
-                tool_name=tool_name,
-                call_id=call_id,
-                arguments=arguments,
-                final_arguments=arguments,
-                status="error",
-                error_code="input_validation",
-                message="; ".join(validation_errors),
-                retryable=True,
-            ))
-
         meta = self._metadata(tool_name)
         # 得到一个数据结构，里面有最大重试次数和重试间隔
         retry_policy = self._retry_policy(tool, meta)
         max_attempts = 1 + retry_policy.max_retries
         last_result: ToolRuntimeResult | None = None
+        all_extra_messages: list[str] = []
+        all_pre_trace: list[HookTraceItem] = []
+        all_post_trace: list[HookTraceItem] = []
+        all_error_trace: list[HookTraceItem] = []
+        all_cancel_trace: list[HookTraceItem] = []
+        all_audit_metadata: dict[str, Any] = {}
 
         for attempt in range(max_attempts):
             request = ToolExecutionRequest(
@@ -208,6 +212,11 @@ class ToolRuntime:
                 request_text=request_text,
                 tool_batch=tool_batch,
                 tool_batch_index=tool_batch_index,
+                attempt=attempt,
+                tool_source_type=meta.source_type,
+                tool_source_name=meta.source_name,
+                risk=meta.risk,
+                idempotent=bool(getattr(tool, "idempotent", True)),
             )
             executed = await self._executor.execute(
                 request,
@@ -217,26 +226,19 @@ class ToolRuntime:
                     ctx,
                     timeout_s=_tool_timeout(tool, self._config.default_timeout_s),
                 ),
+                input_validator=lambda value: validate_json_schema(value, tool.parameters),
+                output_validator=lambda output: validate_json_schema(
+                    normalize_tool_output(output)[0], tool.output_schema
+                ),
             )
+            all_extra_messages.extend(executed.extra_messages)
+            all_pre_trace.extend(executed.pre_hook_trace)
+            all_post_trace.extend(executed.post_hook_trace)
+            all_error_trace.extend(executed.error_hook_trace)
+            all_cancel_trace.extend(executed.cancel_hook_trace)
+            all_audit_metadata.update(executed.audit_metadata)
             if executed.status == "success":
                 data, data_text = normalize_tool_output(executed.output)
-                output_errors = validate_json_schema(data, tool.output_schema)
-                if output_errors:
-                    return finish(self._error(
-                        started=started,
-                        tool_name=tool_name,
-                        call_id=call_id,
-                        arguments=arguments,
-                        final_arguments=executed.final_arguments,
-                        status="error",
-                        error_code="output_validation",
-                        message="; ".join(output_errors),
-                        retryable=False,
-                        retry_count=attempt,
-                        extra_messages=executed.extra_messages,
-                        pre_hook_trace=executed.pre_hook_trace,
-                        post_hook_trace=executed.post_hook_trace,
-                    ))
                 return finish(ToolRuntimeResult(
                     ok=True,
                     status="success",
@@ -248,13 +250,18 @@ class ToolRuntime:
                     duration_ms=_elapsed_ms(started),
                     arguments=arguments,
                     final_arguments=executed.final_arguments,
-                    extra_messages=executed.extra_messages,
-                    pre_hook_trace=executed.pre_hook_trace,
-                    post_hook_trace=executed.post_hook_trace,
+                    extra_messages=all_extra_messages,
+                    pre_hook_trace=all_pre_trace,
+                    post_hook_trace=all_post_trace,
+                    error_hook_trace=all_error_trace,
+                    cancel_hook_trace=all_cancel_trace,
+                    audit_metadata=all_audit_metadata,
                 ))
 
-            error_code = _classify_executor_error(executed.output, executed.status)
-            retryable = _is_retryable_error(error_code, str(executed.output))
+            error_code = executed.error_code or _classify_executor_error(
+                executed.output, executed.status
+            )
+            retryable = bool(executed.retryable)
             last_result = self._error(
                 started=started,
                 tool_name=tool_name,
@@ -266,9 +273,13 @@ class ToolRuntime:
                 message=str(executed.output),
                 retryable=retryable and attempt < max_attempts - 1,
                 retry_count=attempt,
-                extra_messages=executed.extra_messages,
-                pre_hook_trace=executed.pre_hook_trace,
-                post_hook_trace=executed.post_hook_trace,
+                extra_messages=all_extra_messages,
+                pre_hook_trace=all_pre_trace,
+                post_hook_trace=all_post_trace,
+                error_hook_trace=all_error_trace,
+                cancel_hook_trace=all_cancel_trace,
+                audit_metadata=all_audit_metadata,
+                exception_type=executed.exception_type,
             )
             if executed.status == "denied":
                 return finish(last_result)
@@ -385,6 +396,10 @@ class ToolRuntime:
         extra_messages: list[str] | None = None,
         pre_hook_trace: list[HookTraceItem] | None = None,
         post_hook_trace: list[HookTraceItem] | None = None,
+        error_hook_trace: list[HookTraceItem] | None = None,
+        cancel_hook_trace: list[HookTraceItem] | None = None,
+        audit_metadata: dict[str, Any] | None = None,
+        exception_type: str = "",
     ) -> ToolRuntimeResult:
         return ToolRuntimeResult(
             ok=False,
@@ -401,6 +416,10 @@ class ToolRuntime:
             extra_messages=list(extra_messages or []),
             pre_hook_trace=list(pre_hook_trace or []),
             post_hook_trace=list(post_hook_trace or []),
+            error_hook_trace=list(error_hook_trace or []),
+            cancel_hook_trace=list(cancel_hook_trace or []),
+            audit_metadata=dict(audit_metadata or {}),
+            exception_type=exception_type,
         )
 
 
@@ -558,6 +577,14 @@ def _serialize_trace(items: list[HookTraceItem]) -> list[dict[str, Any]]:
             "decision": item.decision,
             "reason": item.reason,
             "extra_message": item.extra_message,
+            "attempt": item.attempt,
+            "input_before": redact_sensitive(item.input_before),
+            "input_after": redact_sensitive(item.input_after),
+            "output_before": redact_sensitive(item.output_before),
+            "output_after": redact_sensitive(item.output_after),
+            "audit_metadata": redact_sensitive(item.audit_metadata),
+            "error_code": item.error_code,
+            "retryable": item.retryable,
         }
         for item in items
     ]

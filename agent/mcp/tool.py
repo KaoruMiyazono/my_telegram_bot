@@ -6,6 +6,7 @@ from typing import Any
 
 from agent.mcp.client import McpToolInfo
 from agent.mcp.host import McpHost
+from agent.tool_hooks.errors import ToolBusinessError
 from agent.tools.base import Tool
 
 
@@ -35,7 +36,7 @@ def build_mcp_tool(
             "content": result.content,
         }
         if result.is_error:
-            raise RuntimeError(json.dumps(payload, ensure_ascii=False))
+            raise ToolBusinessError(json.dumps(payload, ensure_ascii=False))
         return json.dumps(payload, ensure_ascii=False)
 
     return Tool(

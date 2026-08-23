@@ -108,6 +108,56 @@ def on_tool_pre(
     return deco
 
 
+def _tool_hook_decorator(
+    event_type: PluginEventType,
+    *,
+    tool_name: str | None,
+    options: dict[str, Any],
+) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+    def deco(func: Callable[..., Any]) -> Callable[..., Any]:
+        plugin_registry._handlers.append(
+            PluginHandlerMetadata(
+                kind=MetadataKind.TOOL_HOOK,
+                event_type=event_type,
+                handler_type=None,
+                handler=func,
+                handler_name=func.__name__,
+                plugin_module_path=func.__module__,
+                hook_tool_name=tool_name,
+                **options,
+            )
+        )
+        return func
+    return deco
+
+
+def on_tool_after(
+    *, tool_name: str | None = None, **options: Any
+) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+    """Run after a successful tool call; may normalize/redact its result."""
+    return _tool_hook_decorator(
+        PluginEventType.POST_TOOL, tool_name=tool_name, options=options
+    )
+
+
+def on_tool_error(
+    *, tool_name: str | None = None, **options: Any
+) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+    """Observe a classified error and optionally refine retry metadata."""
+    return _tool_hook_decorator(
+        PluginEventType.TOOL_ERROR, tool_name=tool_name, options=options
+    )
+
+
+def on_tool_cancel(
+    *, tool_name: str | None = None, **options: Any
+) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+    """Release plugin-owned resources when the tool task is cancelled."""
+    return _tool_hook_decorator(
+        PluginEventType.TOOL_CANCEL, tool_name=tool_name, options=options
+    )
+
+
 def tool(
     name: str,
     *,

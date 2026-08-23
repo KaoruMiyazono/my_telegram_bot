@@ -37,7 +37,11 @@ def _write_plugin(root: Path) -> None:
     plugin_dir.mkdir(parents=True)
     (plugin_dir / "plugin.py").write_text(
         '''
-from agent.plugins import Plugin, on_after_turn, on_before_reasoning, on_tool_pre, tool
+from agent.plugins import (
+    Plugin, on_after_turn, on_before_reasoning, on_tool_after,
+    on_tool_cancel, on_tool_error, on_tool_pre, tool,
+)
+from agent.tool_hooks import HookOutcome
 
 
 class ReasoningSlotModule:
@@ -103,6 +107,22 @@ class Sample(Plugin):
     @on_tool_pre(tool_name="echo_plugin")
     async def rewrite_echo(self, event):
         return dict(event.arguments, text=event.arguments.get("text", "") + ":hooked")
+
+    @on_tool_after(tool_name="echo_plugin")
+    async def annotate_echo(self, event):
+        return HookOutcome(
+            output_updated=True,
+            updated_output=event.result + ":after",
+            audit_metadata={"after_plugin": True},
+        )
+
+    @on_tool_error(tool_name="echo_plugin")
+    async def observe_echo_error(self, event):
+        return {"error_plugin": event.error_code}
+
+    @on_tool_cancel(tool_name="echo_plugin")
+    async def cleanup_echo(self, event):
+        return {"cancel_plugin": True}
 
     @on_before_reasoning(priority=10)
     async def add_hint(self, event):
@@ -171,7 +191,8 @@ async def test_plugin_manager_registers_tool_hook_and_lifecycle():
             lambda name, args: registry.execute(name, args),
         )
         assert result.status == "success"
-        assert result.output == "echo:hello:hooked"
+        assert result.output == "echo:hello:hooked:after"
+        assert result.audit_metadata["after_plugin"] is True
 
         ctx = BeforeReasoningCtx(
             session=Session(user_id=1, chat_id=2),

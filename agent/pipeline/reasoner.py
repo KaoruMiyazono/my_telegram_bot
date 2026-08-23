@@ -33,6 +33,7 @@ from agent.runtime.session_compaction import (
     SessionContextCompactor,
 )
 from agent.tool_hooks.executor import ToolExecutor
+from agent.tool_hooks.redaction import redact_sensitive
 from agent.tools.registry import ToolRegistry
 from agent.tools.runtime import ToolRuntime, unwrap_tool_envelope
 from config.settings import settings
@@ -234,7 +235,7 @@ class Reasoner:
                 channel=channel,
                 chat_id=chat_id,
                 tool_name=tool_name,
-                arguments=runtime_result.final_arguments,
+                arguments=redact_sensitive(runtime_result.final_arguments),
                 result=result,
                 status=runtime_result.status,
             )

@@ -35,15 +35,13 @@ class Tool:
     retry_count: int = 0
     output_schema: dict[str, Any] | None = None
 
-    async def execute(self, arguments: dict[str, Any], ctx: Any = None) -> str | ToolResult:
+    async def execute(self, arguments: dict[str, Any], ctx: Any = None) -> Any:
         result = self.handler(arguments, ctx)
         if inspect.isawaitable(result):
             result = await result
         if isinstance(result, ToolResult):
             return result
-        if isinstance(result, str):
-            return result
-        return str(result)
+        return result
     #  发给LLM的只有 name、description、parameters，其他属性不发给LLM
     def to_schema(self) -> dict[str, Any]:
         return {

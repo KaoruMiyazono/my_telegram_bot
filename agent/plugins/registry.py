@@ -27,6 +27,9 @@ class PluginEventType(Enum):
     BEFORE_TOOL_CALL = "before_tool_call"
     AFTER_TOOL_RESULT = "after_tool_result"
     PRE_TOOL = "pre_tool"
+    POST_TOOL = "post_tool"
+    TOOL_ERROR = "tool_error"
+    TOOL_CANCEL = "tool_cancel"
 
 
 @dataclass

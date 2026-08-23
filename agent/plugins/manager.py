@@ -287,6 +287,7 @@ class PluginManager:
                     name=f"plugin:{getattr(instance, 'name', module_path)}:{md.handler_name}",
                     handler=bound,
                     tool_name_filter=md.hook_tool_name,
+                    event=_hook_event(md.event_type),
                 )
             )
 
@@ -350,16 +351,16 @@ def _load_module_list(instance: Any, method_name: str) -> list[object]:
 
 
 class _PluginToolHook(ToolHook):
-    event = "pre_tool_use"
-
     def __init__(
         self,
         *,
         name: str,
         handler: Callable[..., Any],
         tool_name_filter: str | None,
+        event: str,
     ) -> None:
         self.name = name
+        self.event = event
         self._handler = handler
         self._tool_name_filter = tool_name_filter
 
@@ -367,6 +368,20 @@ class _PluginToolHook(ToolHook):
         return self._tool_name_filter is None or ctx.request.tool_name == self._tool_name_filter
 
     async def run(self, ctx: HookContext) -> HookOutcome:
+        if self.event != "before_call":
+            result = self._handler(ctx)
+            if inspect.isawaitable(result):
+                result = await result
+            if result is None:
+                return HookOutcome()
+            if isinstance(result, HookOutcome):
+                return result
+            if self.event == "after_call":
+                return HookOutcome(output_updated=True, updated_output=result)
+            if isinstance(result, dict):
+                return HookOutcome(audit_metadata=dict(result))
+            return HookOutcome()
+
         event = PreToolCtx(
             session_key=ctx.request.session_key,
             channel=ctx.request.channel,
@@ -392,6 +407,15 @@ class _PluginToolHook(ToolHook):
             decision="deny",
             reason=f"插件 hook {self.name} 返回了不支持的结果类型",
         )
+
+
+def _hook_event(event_type: PluginEventType | None) -> str:
+    return {
+        PluginEventType.PRE_TOOL: "before_call",
+        PluginEventType.POST_TOOL: "after_call",
+        PluginEventType.TOOL_ERROR: "on_error",
+        PluginEventType.TOOL_CANCEL: "on_cancel",
+    }.get(event_type, "before_call")
 
 
 def _load_plugin_config(plugin_dir: Path) -> Any:
