@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import hashlib
+import os
 import shutil
 import sqlite3
 from dataclasses import dataclass
@@ -26,6 +28,7 @@ class MarkdownMemoryStore:
 
     def __init__(self, root: Path) -> None:
         self.root = root
+        self._recover_all_stable_files()
     #  初始化这些.md在用户的文件夹中，如果不存在就创建它们，并写入默认内容。并且创建一个sqlite数据库文件，用于记录每个source_ref和kind的写入时间，防止重复写入。
     def ensure_user(self, user_id: int) -> Path:
         base = self._user_root(user_id)
@@ -50,10 +53,7 @@ class MarkdownMemoryStore:
     #  写入memory文件夹下的MEMORY.md文件内容，覆盖原有内容
     def write_long_term(self, user_id: int, content: str) -> None:
         self.ensure_user(user_id)
-        self._memory_file(user_id, "MEMORY.md").write_text(
-            content.rstrip() + "\n",
-            encoding="utf-8",
-        )
+        _atomic_write_text(self._memory_file(user_id, "MEMORY.md"), content.rstrip() + "\n")
 
     def read_self(self, user_id: int) -> str:
         self.ensure_user(user_id)
@@ -61,10 +61,52 @@ class MarkdownMemoryStore:
 
     def write_self(self, user_id: int, content: str) -> None:
         self.ensure_user(user_id)
-        self._memory_file(user_id, "SELF.md").write_text(
-            content.rstrip() + "\n",
-            encoding="utf-8",
-        )
+        _atomic_write_text(self._memory_file(user_id, "SELF.md"), content.rstrip() + "\n")
+
+    def write_stable_pair(self, user_id: int, *, memory: str, self_content: str) -> None:
+        """Publish both stable prompt files with recoverable backups."""
+        self.ensure_user(user_id)
+        memory_path = self._memory_file(user_id, "MEMORY.md")
+        self_path = self._memory_file(user_id, "SELF.md")
+        memory_backup = self._memory_file(user_id, "MEMORY.optimizer.bak.md")
+        self_backup = self._memory_file(user_id, "SELF.optimizer.bak.md")
+        shutil.copyfile(memory_path, memory_backup)
+        shutil.copyfile(self_path, self_backup)
+        try:
+            _atomic_write_text(memory_path, memory.rstrip() + "\n")
+            _atomic_write_text(self_path, self_content.rstrip() + "\n")
+        except Exception:
+            self.restore_stable_pair(user_id)
+            raise
+
+    def restore_stable_pair(self, user_id: int) -> None:
+        memory_backup = self._memory_file(user_id, "MEMORY.optimizer.bak.md")
+        self_backup = self._memory_file(user_id, "SELF.optimizer.bak.md")
+        if memory_backup.exists():
+            os.replace(memory_backup, self._memory_file(user_id, "MEMORY.md"))
+        if self_backup.exists():
+            os.replace(self_backup, self._memory_file(user_id, "SELF.md"))
+
+    def finish_stable_pair(self, user_id: int) -> None:
+        for name in ("MEMORY.optimizer.bak.md", "SELF.optimizer.bak.md"):
+            path = self._memory_file(user_id, name)
+            if path.exists():
+                path.unlink()
+
+    def stable_prompt_hash(self, user_id: int) -> str:
+        """Hash only stable prompt inputs; PENDING/HISTORY never affect it."""
+        payload = self.read_self(user_id).rstrip() + "\n---MEMORY---\n" + self.read_long_term(user_id).rstrip()
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+    def users_with_pending(self) -> list[int]:
+        users_dir = self.root / "users"
+        if not users_dir.exists():
+            return []
+        result: list[int] = []
+        for path in users_dir.iterdir():
+            if path.is_dir() and path.name.isdigit() and self.read_pending(int(path.name)):
+                result.append(int(path.name))
+        return sorted(result)
 
     def read_recent_context(self, user_id: int) -> str:
         self.ensure_user(user_id)
@@ -233,6 +275,21 @@ class MarkdownMemoryStore:
         conn.commit()
         conn.close()
 
+    def _recover_stable_files(self, user_id: int) -> None:
+        """A leftover backup means the previous optimizer publish never finished."""
+        memory_backup = self._memory_file(user_id, "MEMORY.optimizer.bak.md")
+        self_backup = self._memory_file(user_id, "SELF.optimizer.bak.md")
+        if memory_backup.exists() or self_backup.exists():
+            self.restore_stable_pair(user_id)
+
+    def _recover_all_stable_files(self) -> None:
+        users_dir = self.root / "users"
+        if not users_dir.exists():
+            return
+        for path in users_dir.iterdir():
+            if path.is_dir() and path.name.isdigit():
+                self._recover_stable_files(int(path.name))
+
     def _claim_write(self, user_id: int, *, source_ref: str, kind: str) -> bool:
         self._ensure_writes_db(user_id)
         conn = sqlite3.connect(self._writes_db(user_id))
@@ -253,6 +310,12 @@ def _ensure_file(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     if not path.exists():
         path.write_text(content, encoding="utf-8")
+
+
+def _atomic_write_text(path: Path, content: str) -> None:
+    temporary = path.with_name(f".{path.name}.tmp")
+    temporary.write_text(content, encoding="utf-8")
+    os.replace(temporary, path)
 
 
 def _default_recent_context() -> str:

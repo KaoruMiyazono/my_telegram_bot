@@ -69,6 +69,114 @@ class MemoryStore:
             updated_at=datetime.utcnow(),
         )
 
+    async def reconcile_optimized(self, *, user_id: int, entries: list[Any]) -> dict[str, int]:
+        """Atomically make vector memory mirror the optimizer's stable Markdown."""
+        prepared: list[tuple[Any, list[float]]] = []
+        for entry in entries:
+            prepared.append((entry, await self.embedder.embed(str(entry.summary))))
+
+        conn = get_connection()
+        cursor = conn.cursor()
+        inserted = 0
+        skipped = 0
+        superseded = 0
+        invalidated = 0
+        desired_keys = {
+            (str(entry.memory_type), _normalize_summary(str(entry.summary)))
+            for entry, _embedding in prepared
+        }
+        try:
+            cursor.execute("BEGIN")
+            active_rows = cursor.execute(
+                """
+                SELECT id, memory_type, summary, source_ref, topic_key
+                FROM memory_items
+                WHERE user_id = ? AND status = 'active' AND origin = 'optimizer'
+                """,
+                (user_id,),
+            ).fetchall()
+            active_by_key = {
+                (str(row[1]), _normalize_summary(str(row[2]))): row for row in active_rows
+            }
+            active_by_topic = {
+                str(row[4]): row for row in active_rows if str(row[4] or "").strip()
+            }
+            retained_ids: set[str] = set()
+
+            for entry, embedding in prepared:
+                key = (str(entry.memory_type), _normalize_summary(str(entry.summary)))
+                existing = active_by_key.get(key)
+                if existing is not None:
+                    retained_ids.add(str(existing[0]))
+                    skipped += 1
+                    continue
+
+                item_id = str(uuid4())
+                topic_key = str(getattr(entry, "topic_key", "") or "").strip() or None
+                source_ref = str(getattr(entry, "source_ref", "") or "").strip() or None
+                encoded = _encode_embedding(embedding)
+                cursor.execute(
+                    """
+                    INSERT INTO memory_items (
+                        id, user_id, memory_type, summary, embedding, status,
+                        source_ref, origin, topic_key
+                    ) VALUES (?, ?, ?, ?, ?, 'active', ?, 'optimizer', ?)
+                    """,
+                    (item_id, user_id, entry.memory_type, entry.summary, encoded, source_ref, topic_key),
+                )
+                cursor.execute(
+                    "INSERT INTO vec_items (embedding_id, embedding) VALUES (?, ?)",
+                    (item_id, encoded),
+                )
+                inserted += 1
+                retained_ids.add(item_id)
+
+                old = active_by_topic.get(topic_key or "")
+                if old is not None and str(old[0]) not in retained_ids:
+                    cursor.execute(
+                        "UPDATE memory_items SET status = 'superseded', updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                        (str(old[0]),),
+                    )
+                    cursor.execute(
+                        """
+                        INSERT OR IGNORE INTO memory_replacements (
+                            old_id, new_id, relation_type, topic_key, reason,
+                            old_source_ref, new_source_ref
+                        ) VALUES (?, ?, 'supersede', ?, ?, ?, ?)
+                        """,
+                        (
+                            str(old[0]), item_id, topic_key,
+                            "stable memory changed for the same topic",
+                            old[3], source_ref,
+                        ),
+                    )
+                    superseded += 1
+
+            for row in active_rows:
+                old_key = (str(row[1]), _normalize_summary(str(row[2])))
+                old_id = str(row[0])
+                if old_id in retained_ids or old_key in desired_keys:
+                    continue
+                if str(row[4] or "") in {
+                    str(getattr(entry, "topic_key", "") or "") for entry, _ in prepared
+                }:
+                    continue
+                cursor.execute(
+                    "UPDATE memory_items SET status = 'invalidated', updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                    (old_id,),
+                )
+                invalidated += 1
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        return {
+            "inserted": inserted,
+            "skipped": skipped,
+            "superseded": superseded,
+            "invalidated": invalidated,
+        }
+
     #  根据vector向量进行搜索，返回最相似的记忆项。 主要是利用sqlite-vec这个库进行向量搜索。
     async def vector_search(
         self,
@@ -348,3 +456,7 @@ def _decode_embedding(data: bytes | None) -> list[float] | None:
     import struct
 
     return list(struct.unpack(f"{len(data) // 4}f", data))
+
+
+def _normalize_summary(value: str) -> str:
+    return " ".join(value.strip().lower().split())

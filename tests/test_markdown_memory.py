@@ -104,9 +104,10 @@ async def test_consolidation_shadow_writes_markdown() -> None:
         journal_files = list((memory_dir / "journal").glob("*.md"))
 
         assert written == 1
-        assert vector_store.calls[0]["source_ref"] == "session:42:7#msg:0-1"
+        assert vector_store.calls == []
         assert "用户是后端工程师" in history
         assert "- [identity] 用户是后端工程师" in pending
+        assert "[↗session:42:7#msg:0-1]" in pending
         assert journal_files
         assert session.last_consolidated == 2
 

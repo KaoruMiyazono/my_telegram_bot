@@ -39,6 +39,8 @@ CREATE TABLE IF NOT EXISTS memory_items (
     embedding BLOB,
     status TEXT NOT NULL DEFAULT 'active',
     source_ref TEXT,
+    origin TEXT NOT NULL DEFAULT 'runtime',
+    topic_key TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -53,6 +55,11 @@ CREATE VIRTUAL TABLE IF NOT EXISTS vec_items USING vec0(
 CREATE TABLE IF NOT EXISTS memory_replacements (
     old_id TEXT NOT NULL,
     new_id TEXT NOT NULL,
+    relation_type TEXT NOT NULL DEFAULT 'supersede',
+    topic_key TEXT,
+    reason TEXT,
+    old_source_ref TEXT,
+    new_source_ref TEXT,
     replaced_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (old_id, new_id)
 );
@@ -158,6 +165,28 @@ def _ensure_conversation_session_columns(conn: sqlite3.Connection) -> None:
         )
 
 
+def _ensure_memory_columns(conn: sqlite3.Connection) -> None:
+    """Migrate existing M6 memory databases without discarding user data."""
+    item_columns = {str(row[1]) for row in conn.execute("PRAGMA table_info(memory_items)")}
+    if "origin" not in item_columns:
+        conn.execute("ALTER TABLE memory_items ADD COLUMN origin TEXT NOT NULL DEFAULT 'runtime'")
+    if "topic_key" not in item_columns:
+        conn.execute("ALTER TABLE memory_items ADD COLUMN topic_key TEXT")
+
+    replacement_columns = {
+        str(row[1]) for row in conn.execute("PRAGMA table_info(memory_replacements)")
+    }
+    for name, definition in (
+        ("relation_type", "TEXT NOT NULL DEFAULT 'supersede'"),
+        ("topic_key", "TEXT"),
+        ("reason", "TEXT"),
+        ("old_source_ref", "TEXT"),
+        ("new_source_ref", "TEXT"),
+    ):
+        if name not in replacement_columns:
+            conn.execute(f"ALTER TABLE memory_replacements ADD COLUMN {name} {definition}")
+
+
 def init_db() -> None:
     """Initialize database with schema."""
     #  创建记忆文件夹，记忆都存储在 memory.db文件中
@@ -174,6 +203,7 @@ def init_db() -> None:
     #  执行以争端sql脚本，脚本作用是 创建表格，创建向量索引，创建记忆替换表格，创建会话表格
     conn.executescript(TABLE_SCHEMA)
     _ensure_conversation_session_columns(conn)
+    _ensure_memory_columns(conn)
     #  提交事务并关闭连接
     conn.commit()
     conn.close()

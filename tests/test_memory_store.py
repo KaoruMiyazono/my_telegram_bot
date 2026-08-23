@@ -5,6 +5,7 @@ import sys
 import tempfile
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
+from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -133,6 +134,45 @@ async def test_keyword_search():
         assert "张三" in results[0].summary
         print(f"Keyword search result: {results[0].summary}")
         print("test_keyword_search: PASS")
+
+
+async def test_optimizer_reconcile_supersedes_same_topic_and_keeps_lineage():
+    init_db()
+    with patch.object(Embedder, "embed", new=AsyncMock(return_value=[0.4] * 1024)):
+        store = MemoryStore(Embedder())
+        first = SimpleNamespace(
+            memory_type="profile",
+            summary="用户使用 iPhone。",
+            source_ref="session:42:7#msg:0-1",
+            topic_key="profile:device.phone",
+        )
+        second = SimpleNamespace(
+            memory_type="profile",
+            summary="用户现在使用 Android 手机。",
+            source_ref="session:42:7#msg:8-9",
+            topic_key="profile:device.phone",
+        )
+        await store.reconcile_optimized(user_id=42, entries=[first])
+        result = await store.reconcile_optimized(user_id=42, entries=[second])
+
+        conn = sqlite3.connect(os.environ["DATABASE_PATH"])
+        rows = conn.execute(
+            "SELECT summary, status, source_ref FROM memory_items WHERE user_id = 42 ORDER BY created_at"
+        ).fetchall()
+        replacement = conn.execute(
+            "SELECT topic_key, old_source_ref, new_source_ref, reason FROM memory_replacements"
+        ).fetchone()
+        conn.close()
+
+        assert result["superseded"] == 1
+        assert {row[0]: row[1] for row in rows}["用户使用 iPhone。"] == "superseded"
+        assert {row[0]: row[1] for row in rows}["用户现在使用 Android 手机。"] == "active"
+        assert replacement[:3] == (
+            "profile:device.phone",
+            "session:42:7#msg:0-1",
+            "session:42:7#msg:8-9",
+        )
+        assert replacement[3]
 
 
 async def main():

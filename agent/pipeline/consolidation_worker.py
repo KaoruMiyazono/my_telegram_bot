@@ -3,7 +3,7 @@ Consolidation 窗口期处理：从对话窗口提取长期记忆
 
 复刻 akashic-agent 的 _MarkdownConsolidationWorker + _on_consolidation_committed 逻辑：
   每轮对话后异步检查 → 攒够 N 条新消息 → LLM 提取 profile/preference/event
-  → 写入向量库，附带 source_ref 可追溯
+  → 只写入 PENDING.md 候选，附带 source_ref 可追溯
 
 akashic 模式：
   TurnCommitted → _enqueue_maintenance → _should_consolidate_session
@@ -81,7 +81,7 @@ event — 用户提到的重要事件、行为、状态变化
 class ConsolidationWorker:
     """
     窗口期 consolidation：异步检查 session 是否有足够新消息，
-    调 LLM 提取长期记忆，写入 MemoryStore。
+    调 LLM 提取长期记忆候选，写入 PENDING.md。
 
     对齐 akashic：
       _should_consolidate_session → _select_consolidation_window
@@ -145,7 +145,7 @@ class ConsolidationWorker:
         执行一次 consolidation：
           1. 取对话窗口
           2. LLM 提取
-          3. 写入 MemoryStore
+          3. 写入 PENDING.md（不改动稳定 Markdown/向量记忆）
           4. 更新 session.last_consolidated
 
         返回写入的记忆条目数。
@@ -180,7 +180,7 @@ class ConsolidationWorker:
             session.last_consolidated = consolidate_up_to
             return 0
 
-        # 写入 MemoryStore
+        # 第一阶段只写 PENDING。Optimizer 正式归档前，候选不可被 recall_memory 检索。
         source_ref = _build_window_source_ref(
             user_id=user_id,
             chat_id=chat_id,
@@ -192,22 +192,7 @@ class ConsolidationWorker:
             source_ref=source_ref,
             user_id=user_id,
         )
-        written = 0
-        for s in summaries:
-            try:
-                await store.upsert_item(
-                    memory_type=s["memory_type"],
-                    summary=s["summary"],
-                    user_id=user_id,
-                    source_ref=source_ref,
-                )
-                written += 1
-                logger.info(
-                    "Consolidation saved: [%s] %s",
-                    s["memory_type"], s["summary"][:80],
-                )
-            except Exception as e:
-                logger.error("Consolidation upsert failed: %s", e)
+        written = len(summaries)
 
         # 推进指针（对齐 akashic session.last_consolidated = consolidate_up_to）
         session.last_consolidated = consolidate_up_to
@@ -236,7 +221,7 @@ class ConsolidationWorker:
             if str(item.get("summary") or "").strip()
         ]
         pending_items = [
-            _format_pending_item(item)
+            _format_pending_item(item, source_ref=source_ref)
             for item in summaries
             if _format_pending_item(item)
         ]
@@ -348,7 +333,7 @@ def _build_window_source_ref(*, user_id: int, chat_id: int, start: int, end: int
     return f"session:{user_id}:{chat_id}#msg:{start}-{end}"
 
 
-def _format_pending_item(item: dict[str, str]) -> str:
+def _format_pending_item(item: dict[str, str], *, source_ref: str = "") -> str:
     summary = str(item.get("summary") or "").strip()
     if not summary:
         return ""
@@ -360,4 +345,5 @@ def _format_pending_item(item: dict[str, str]) -> str:
         "event": "requested_memory",
         "fact": "requested_memory",
     }.get(memory_type, "requested_memory")
-    return f"- [{tag}] {summary}"
+    citation = f" [↗{source_ref}]" if source_ref else ""
+    return f"- [{tag}] {summary}{citation}"

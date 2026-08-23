@@ -23,6 +23,8 @@ class Settings(BaseSettings):
     TOOL_INITIAL_MAX_SCHEMAS: int = 8
     TOOL_INITIAL_SCHEMA_CHAR_BUDGET: int = 12_000
     TOOL_SESSION_LRU_SIZE: int = 4
+    MEMORY_OPTIMIZER_ENABLED: bool = True
+    MEMORY_OPTIMIZER_INTERVAL_SECONDS: float = 900.0
 
     # Generic MCP runtime
     MCP_CONFIG_PATH: str = "./config/mcp_servers.toml"

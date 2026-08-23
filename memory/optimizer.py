@@ -51,6 +51,8 @@ class MemoryOptimizerResult:
     vector_skipped: int = 0
     vector_error: str = ""
     error: str = ""
+    stable_hash_before: str = ""
+    stable_hash_after: str = ""
 
 
 class OpenAITextProvider:
@@ -96,6 +98,7 @@ _MERGE_PROMPT = """\
 - 不要保留短期状态、临时情绪、一次性任务过程、过期数字。
 - 不要生成工具调用规则、pipeline 规则或 eval 规则。
 - PENDING 中的 tag 只辅助分类，不要原样输出 tag。
+- 每条事实末尾的 [↗source_ref] 是原始证据，合并后必须保留；纠正事实使用新事实的证据。
 - 输出必须紧凑，后续会全文注入 prompt。
 
 推荐输出结构：
@@ -185,6 +188,7 @@ class MemoryOptimizer:
             return await self._optimize(user_id)
 
     async def _optimize(self, user_id: int) -> MemoryOptimizerResult:
+        stable_hash_before = self._memory.stable_prompt_hash(user_id)
         pending = self._memory.snapshot_pending(user_id)
         current_memory = self._memory.read_long_term(user_id).strip()
         current_self = self._memory.read_self(user_id).strip()
@@ -217,19 +221,25 @@ class MemoryOptimizer:
                     error="empty_memory_merge",
                 )
 
-            if current_memory:
-                self._memory.backup_long_term(user_id)
-            self._memory.write_long_term(user_id, merged_memory)
+            merged_memory = _restore_source_refs(merged_memory, pending)
 
             self_updated = False
+            updated_self = current_self or "# Self Model\n"
             if pending:
-                updated_self = await self._update_self(current_self, pending)
-                if updated_self:
-                    self._memory.write_self(user_id, updated_self)
+                proposed_self = await self._update_self(current_self, pending)
+                if proposed_self:
+                    updated_self = proposed_self
                     self_updated = True
 
+            self._memory.write_stable_pair(
+                user_id,
+                memory=merged_memory,
+                self_content=updated_self,
+            )
+            vector_result = await self._sync_vector(user_id)
             self._memory.commit_pending_snapshot(user_id)
-            vector_result, vector_error = await self._sync_vector_safe(user_id)
+            self._memory.finish_stable_pair(user_id)
+            stable_hash_after = self._memory.stable_prompt_hash(user_id)
             return MemoryOptimizerResult(
                 user_id=user_id,
                 status="merged",
@@ -240,10 +250,12 @@ class MemoryOptimizer:
                 vector_parsed=vector_result.parsed_count,
                 vector_inserted=vector_result.inserted_count,
                 vector_skipped=vector_result.skipped_count,
-                vector_error=vector_error,
+                stable_hash_before=stable_hash_before,
+                stable_hash_after=stable_hash_after,
             )
         except Exception as exc:
             logger.exception("[memory_optimizer] optimize failed user_id=%s", user_id)
+            self._memory.restore_stable_pair(user_id)
             self._memory.rollback_pending_snapshot(user_id)
             return MemoryOptimizerResult(
                 user_id=user_id,
@@ -251,7 +263,14 @@ class MemoryOptimizer:
                 pending_chars=len(pending),
                 memory_before_chars=len(current_memory),
                 error=str(exc),
+                stable_hash_before=stable_hash_before,
+                stable_hash_after=self._memory.stable_prompt_hash(user_id),
             )
+
+    async def _sync_vector(self, user_id: int) -> MarkdownVectorSyncResult:
+        if self._vector_sync is None:
+            return MarkdownVectorSyncResult(user_id=user_id)
+        return await self._vector_sync.sync_user(markdown=self._memory, user_id=user_id)
 
     async def _sync_vector_safe(self, user_id: int) -> tuple[MarkdownVectorSyncResult, str]:
         if self._vector_sync is None:
@@ -355,10 +374,79 @@ def _pending_fact_texts(pending: str) -> list[str]:
         if not stripped.startswith("- ["):
             continue
         _, _, fact = stripped.partition("] ")
-        fact = fact.strip()
+        fact = _strip_source_ref(fact.strip())
         if fact:
             facts.append(fact)
     return facts
+
+
+def _strip_source_ref(value: str) -> str:
+    import re
+
+    return re.sub(r"\s*\[↗[^\]]+\]\s*$", "", value).strip()
+
+
+def _restore_source_refs(merged: str, pending: str) -> str:
+    """Repair providers that accidentally drop exact evidence citations."""
+    import re
+
+    sources: dict[str, str] = {}
+    for raw in pending.splitlines():
+        line = raw.strip()
+        if not line.startswith("- ["):
+            continue
+        _, _, fact = line.partition("] ")
+        match = re.search(r"\s*\[↗([^\]]+)\]\s*$", fact)
+        if match:
+            sources[_strip_source_ref(fact)] = match.group(1).strip()
+    output: list[str] = []
+    for raw in merged.splitlines():
+        line = raw.rstrip()
+        if line.strip().startswith(("- ", "* ")) and "[↗" not in line:
+            summary = line.strip()[2:].strip()
+            source = sources.get(summary)
+            if source:
+                line += f" [↗{source}]"
+        output.append(line)
+    return "\n".join(output).strip()
+
+
+class MemoryOptimizerLoop:
+    """Periodically turns PENDING candidates into stable, searchable memory."""
+
+    def __init__(self, optimizer: MemoryOptimizer, memory: MarkdownMemoryStore, *, interval: float) -> None:
+        self._optimizer = optimizer
+        self._memory = memory
+        self._interval = max(1.0, interval)
+        self._task: asyncio.Task[None] | None = None
+
+    async def start(self) -> None:
+        if self._task is None:
+            self._task = asyncio.create_task(self._run(), name="memory-optimizer")
+
+    async def stop(self) -> None:
+        if self._task is None:
+            return
+        self._task.cancel()
+        try:
+            await self._task
+        except asyncio.CancelledError:
+            pass
+        self._task = None
+
+    async def run_once(self) -> list[MemoryOptimizerResult]:
+        results: list[MemoryOptimizerResult] = []
+        for user_id in self._memory.users_with_pending():
+            results.append(await self._optimizer.optimize(user_id))
+        return results
+
+    async def _run(self) -> None:
+        while True:
+            await asyncio.sleep(self._interval)
+            try:
+                await self.run_once()
+            except Exception:
+                logger.exception("[memory_optimizer] periodic run failed")
 
 
 def _iter_user_ids(store: MarkdownMemoryStore) -> list[int]:

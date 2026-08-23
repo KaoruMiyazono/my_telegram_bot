@@ -32,15 +32,22 @@ def _snapshot_path(root: Path, user_id: int) -> Path:
 class FakeVectorSync:
     def __init__(self) -> None:
         self.calls = []
+        self.contents = []
 
     async def sync_user(self, *, markdown: MarkdownMemoryStore, user_id: int):
         self.calls.append((markdown, user_id))
+        self.contents.append(markdown.read_long_term(user_id))
         return MarkdownVectorSyncResult(
             user_id=user_id,
             parsed_count=2,
             inserted_count=1,
             skipped_count=1,
         )
+
+
+class FailingVectorSync:
+    async def sync_user(self, *, markdown: MarkdownMemoryStore, user_id: int):
+        raise RuntimeError("vector transaction failed")
 
 
 async def test_optimizer_skips_empty_workspace() -> None:
@@ -111,6 +118,8 @@ async def test_optimizer_syncs_vector_after_successful_merge() -> None:
         assert result.vector_skipped == 1
         assert result.vector_error == ""
         assert vector_sync.calls == [(store, 42)]
+        assert "用户喜欢拿铁" in vector_sync.contents[0]
+        assert "用户喜欢拿铁" in store.read_long_term(42)
         print("test_optimizer_syncs_vector_after_successful_merge: PASS")
 
 
@@ -238,6 +247,58 @@ async def test_optimizer_busy_reports_error() -> None:
         release.set()
         await running
         print("test_optimizer_busy_reports_error: PASS")
+
+
+async def test_optimizer_rolls_back_markdown_and_pending_on_vector_failure() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        store = MarkdownMemoryStore(Path(tmp))
+        old_memory = "# Long-term Memory\n\n## User Facts\n- 用户使用 iPhone。\n"
+        store.write_long_term(42, old_memory)
+        before_hash = store.stable_prompt_hash(42)
+        store.append_pending_once(
+            user_id=42,
+            items=["- [identity] 用户现在使用 Android 手机。 [↗session:42:7#msg:8-9]"],
+            source_ref="session:42:7#msg:8-9",
+        )
+        assert store.stable_prompt_hash(42) == before_hash
+        provider = _provider_with_responses(
+            "# Long-term Memory\n\n## User Facts\n- 用户现在使用 Android 手机。\n",
+            "# Self Model\n\n## Persona\n- 可靠。\n",
+        )
+        optimizer = MemoryOptimizer(
+            store,
+            provider,
+            "test-model",
+            vector_sync=FailingVectorSync(),  # type: ignore[arg-type]
+        )
+
+        result = await optimizer.optimize(42)
+
+        assert result.status == "rolled_back"
+        assert store.read_long_term(42) == old_memory
+        assert "Android" in store.read_pending(42)
+        assert store.stable_prompt_hash(42) == before_hash
+
+
+async def test_stable_hash_changes_only_after_optimizer_commit() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        store = MarkdownMemoryStore(Path(tmp))
+        before_hash = store.stable_prompt_hash(42)
+        store.append_pending_once(
+            user_id=42,
+            items=["- [preference] 用户喜欢拿铁。 [↗session:42:7#msg:0-1]"],
+            source_ref="session:42:7#msg:0-1",
+        )
+        assert store.stable_prompt_hash(42) == before_hash
+        provider = _provider_with_responses(
+            "# Long-term Memory\n\n## User Preferences\n- 用户喜欢拿铁。\n",
+            "# Self Model\n\n## Persona\n- 稳定。\n",
+        )
+        result = await MemoryOptimizer(store, provider, "test-model").optimize(42)
+        assert result.status == "merged"
+        assert result.stable_hash_before == before_hash
+        assert store.stable_prompt_hash(42) != before_hash
+        assert "[↗session:42:7#msg:0-1]" in store.read_long_term(42)
 
 
 async def main() -> None:

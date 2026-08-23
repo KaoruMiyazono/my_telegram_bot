@@ -11,6 +11,8 @@ from memory.markdown_store import MarkdownMemoryStore
 class MarkdownMemoryEntry:
     memory_type: str
     summary: str
+    source_ref: str = ""
+    topic_key: str = ""
 
 
 @dataclass(frozen=True)
@@ -37,6 +39,16 @@ class MarkdownVectorSync:
         if not entries:
             return MarkdownVectorSyncResult(user_id=user_id)
 
+        reconcile = getattr(self._memory_store, "reconcile_optimized", None)
+        if callable(reconcile):
+            result = await reconcile(user_id=user_id, entries=entries)
+            return MarkdownVectorSyncResult(
+                user_id=user_id,
+                parsed_count=len(entries),
+                inserted_count=int(result.get("inserted", 0)),
+                skipped_count=int(result.get("skipped", 0)),
+            )
+
         existing = {
             (str(item.memory_type), _normalize_summary(str(item.summary)))
             for item in self._memory_store.list_memories(
@@ -58,7 +70,7 @@ class MarkdownVectorSync:
                 memory_type=entry.memory_type,
                 summary=entry.summary,
                 user_id=user_id,
-                source_ref=None,
+                source_ref=entry.source_ref or None,
             )
             existing.add(key)
             inserted += 1
@@ -84,7 +96,7 @@ def parse_memory_markdown(content: str) -> list[MarkdownMemoryEntry]:
             heading_level = len(stripped) - len(stripped.lstrip("#"))
             current_section = stripped.lstrip("#").strip() if heading_level >= 2 else ""
             continue
-        summary = _parse_bullet(stripped)
+        summary, source_ref = _parse_bullet(stripped)
         if not summary or _is_placeholder(summary):
             continue
         memory_type = _section_to_memory_type(current_section)
@@ -92,17 +104,40 @@ def parse_memory_markdown(content: str) -> list[MarkdownMemoryEntry]:
         if key in seen:
             continue
         seen.add(key)
-        entries.append(MarkdownMemoryEntry(memory_type=memory_type, summary=summary))
+        entries.append(MarkdownMemoryEntry(
+            memory_type=memory_type,
+            summary=summary,
+            source_ref=source_ref,
+            topic_key=_infer_topic_key(memory_type, summary),
+        ))
 
     return entries
 
 
-def _parse_bullet(line: str) -> str:
+def _parse_bullet(line: str) -> tuple[str, str]:
     if not line.startswith(("- ", "* ")):
-        return ""
+        return "", ""
     value = line[2:].strip()
+    match = re.search(r"\s*\[↗([^\]]+)\]\s*$", value)
+    source_ref = match.group(1).strip() if match else ""
     value = re.sub(r"\s*\[↗[^\]]+\]\s*$", "", value).strip()
-    return value
+    return value, source_ref
+
+
+def _infer_topic_key(memory_type: str, summary: str) -> str:
+    """Use a conservative topic key so obvious corrections form a lineage."""
+    text = _normalize_summary(summary)
+    groups = (
+        ("device.phone", ("iphone", "android", "手机", "安卓")),
+        ("work.company", ("公司", "就职", "入职", "employer")),
+        ("work.role", ("职业", "工程师", "岗位", "职位")),
+        ("location.home", ("居住", "住在", "城市", "搬到")),
+        ("drink.preference", ("咖啡", "拿铁", "茶", "饮品")),
+    )
+    for topic, tokens in groups:
+        if any(token in text for token in tokens):
+            return f"{memory_type}:{topic}"
+    return f"{memory_type}:fact:{text}"
 
 
 def _section_to_memory_type(section: str) -> str:

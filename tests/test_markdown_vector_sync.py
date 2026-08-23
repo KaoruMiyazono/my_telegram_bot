@@ -69,7 +69,7 @@ def test_parse_memory_markdown_top_level_bullets_default_to_profile() -> None:
     print("test_parse_memory_markdown_top_level_bullets_default_to_profile: PASS")
 
 
-async def test_sync_user_inserts_missing_bullets_without_source_ref() -> None:
+async def test_sync_user_inserts_missing_bullets_with_exact_source_ref() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         markdown = MarkdownMemoryStore(Path(tmp))
         markdown.write_long_term(
@@ -100,7 +100,8 @@ async def test_sync_user_inserts_missing_bullets_without_source_ref() -> None:
             "procedure",
         ]
         assert all(call["user_id"] == 42 for call in vector_store.upserts)
-        assert all(call["source_ref"] is None for call in vector_store.upserts)
+        assert vector_store.upserts[0]["source_ref"] == "session:42:7#msg:0-1"
+        assert vector_store.upserts[1]["source_ref"] is None
         print("test_sync_user_inserts_missing_bullets_without_source_ref: PASS")
 
 

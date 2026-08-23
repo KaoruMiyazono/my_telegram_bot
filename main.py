@@ -156,6 +156,18 @@ async def main() -> None:
         markdown_store=memory_runtime.markdown.store,
     )
     invalidation = InvalidationWorker(memory_store, embedder)
+    from memory.markdown_vector_sync import MarkdownVectorSync
+    from memory.optimizer import MemoryOptimizer, MemoryOptimizerLoop, OpenAITextProvider
+    memory_optimizer_loop = MemoryOptimizerLoop(
+        MemoryOptimizer(
+            memory_runtime.markdown.store,
+            OpenAITextProvider(),
+            settings.LLM_MODEL,
+            vector_sync=MarkdownVectorSync(memory_store),
+        ),
+        memory_runtime.markdown.store,
+        interval=settings.MEMORY_OPTIMIZER_INTERVAL_SECONDS,
+    )
 
     # 8. Create pipeline
     pipeline = PassiveTurnPipeline(
@@ -181,6 +193,8 @@ async def main() -> None:
     message_bus.subscribe_outbound("telegram", adapter.send_envelope)
     try:
         await turn_runtime.start()
+        if settings.MEMORY_OPTIMIZER_ENABLED:
+            await memory_optimizer_loop.start()
 
         # 10. Start bot
         logger.info("Starting Telegram bot...")
@@ -195,6 +209,7 @@ async def main() -> None:
     except asyncio.CancelledError:
         pass
     finally:
+        await memory_optimizer_loop.stop()
         await adapter.stop()
         await turn_runtime.stop()
         await mcp_manager.close()
