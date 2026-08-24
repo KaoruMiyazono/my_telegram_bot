@@ -28,6 +28,8 @@ from persistence.database import init_db
 from persistence.session_store import get_session_store
 from persistence.runtime_message_store import RuntimeMessageStore
 from agent.runtime.turn_runtime import TurnRuntime
+from agent.runtime.idle_tasks import IdleTaskResult, IdleTaskRuntime, IdleTaskStore
+from agent.runtime.mode_coordinator import ModeCoordinator
 from agent.tools.message_push import MessagePushTool
 from proactive_v2.agent_tick import AgentTick
 from proactive_v2.contracts import ProactivePolicy
@@ -187,6 +189,26 @@ async def main() -> None:
         memory_runtime.markdown.store,
         interval=settings.MEMORY_OPTIMIZER_INTERVAL_SECONDS,
     )
+    mode_coordinator = ModeCoordinator()
+    idle_store = IdleTaskStore()
+    idle_runtime = IdleTaskRuntime(
+        idle_store,
+        mode_coordinator,
+        poll_seconds=settings.IDLE_TASK_POLL_SECONDS,
+    )
+
+    async def optimize_memory_idle(_context: object) -> IdleTaskResult:
+        await memory_optimizer_loop.run_once()
+        return IdleTaskResult(
+            repeat_after_seconds=settings.MEMORY_OPTIMIZER_INTERVAL_SECONDS
+        )
+
+    idle_runtime.register(
+        "memory_optimizer",
+        optimize_memory_idle,
+        permission="local_maintenance",
+    )
+    mode_coordinator.attach_idle(idle_runtime)
 
     # 8. Create pipeline
     pipeline = PassiveTurnPipeline(
@@ -203,7 +225,11 @@ async def main() -> None:
 
     # 9. Create asynchronous runtime and Telegram adapter.
     message_bus = MessageBus(RuntimeMessageStore())
-    turn_runtime = TurnRuntime(bus=message_bus, pipeline=pipeline)
+    turn_runtime = TurnRuntime(
+        bus=message_bus,
+        pipeline=pipeline,
+        mode_coordinator=mode_coordinator,
+    )
     adapter = TelegramAdapter(
         token=settings.TG_BOT_TOKEN,
         proxy=settings.HTTP_PROXY,
@@ -285,21 +311,37 @@ async def main() -> None:
                 mode="live" if settings.PROACTIVE_MODE.lower() == "live" else "shadow",
                 policy=policy,
                 state_store=proactive_state,
-                passive_busy_fn=turn_runtime.cancellation.is_active,
+                passive_busy_fn=mode_coordinator.is_passive_active,
                 interest_reader=interest_reader.read,
                 ambiguous_interest_judge=ambiguous_interest_judge,
                 ack_handlers=proactive_gateway.ack_handlers(),
                 ack_max_attempts=settings.PROACTIVE_ACK_MAX_ATTEMPTS,
                 ack_retry_base_seconds=settings.PROACTIVE_ACK_RETRY_BASE_SECONDS,
                 ack_retry_max_seconds=settings.PROACTIVE_ACK_RETRY_MAX_SECONDS,
+                mode_coordinator=mode_coordinator,
             ),
             interval_seconds=settings.PROACTIVE_INTERVAL_SECONDS,
             ack_interval_seconds=settings.PROACTIVE_ACK_WORKER_INTERVAL_SECONDS,
         )
+        mode_coordinator.attach_proactive_waker(proactive_loop.wake)
     try:
         await turn_runtime.start()
-        if settings.MEMORY_OPTIMIZER_ENABLED:
-            await memory_optimizer_loop.start()
+        if settings.IDLE_TASKS_ENABLED:
+            await idle_runtime.start()
+            has_optimizer_task = any(
+                task.task_type == "memory_optimizer"
+                and task.status in {"queued", "running", "paused"}
+                for task in idle_store.list()
+            )
+            if settings.MEMORY_OPTIMIZER_ENABLED and not has_optimizer_task:
+                from datetime import datetime, timedelta, timezone
+
+                idle_runtime.enqueue(
+                    "memory_optimizer",
+                    not_before=datetime.now(timezone.utc)
+                    + timedelta(seconds=settings.MEMORY_OPTIMIZER_INTERVAL_SECONDS),
+                    trace_id="idle:memory_optimizer",
+                )
 
         # 10. Start bot
         logger.info("Starting Telegram bot...")
@@ -321,7 +363,7 @@ async def main() -> None:
             await proactive_loop.close()
         if proactive_state is not None:
             proactive_state.close()
-        await memory_optimizer_loop.stop()
+        await idle_runtime.close()
         await adapter.stop()
         await turn_runtime.stop()
         await mcp_manager.close()

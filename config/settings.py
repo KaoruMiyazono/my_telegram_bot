@@ -26,6 +26,10 @@ class Settings(BaseSettings):
     MEMORY_OPTIMIZER_ENABLED: bool = True
     MEMORY_OPTIMIZER_INTERVAL_SECONDS: float = 900.0
 
+    # M11 low-priority local maintenance runtime
+    IDLE_TASKS_ENABLED: bool = True
+    IDLE_TASK_POLL_SECONDS: float = 5.0
+
     # M8 proactive runtime (disabled until a target is configured explicitly)
     PROACTIVE_ENABLED: bool = False
     PROACTIVE_MODE: str = "shadow"

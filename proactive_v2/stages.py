@@ -8,7 +8,7 @@ import logging
 import re
 from collections.abc import Awaitable, Callable, Mapping
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Protocol
 from zoneinfo import ZoneInfo
 
 from agent.tools.message_push import MessagePushTool
@@ -44,6 +44,12 @@ AckHandler = Callable[[str, str], Any]
 InterestReader = Callable[
     [str], UserInterestContext | Awaitable[UserInterestContext]
 ]
+
+
+class DeliveryCoordinator(Protocol):
+    def try_enter_proactive(self, session_key: str, *, trace_id: str = "") -> bool: ...
+
+    def exit_proactive(self, session_key: str, *, trace_id: str = "") -> None: ...
 
 
 class GateStage:
@@ -390,10 +396,12 @@ class DeliverStage:
         push_tool: MessagePushTool,
         *,
         ack_dispatcher: AckOutboxDispatcher | None = None,
+        coordinator: DeliveryCoordinator | None = None,
     ) -> None:
         self._state = state
         self._push_tool = push_tool
         self._acks = ack_dispatcher or AckOutboxDispatcher(state)
+        self._coordinator = coordinator
 
     async def run(self, value: DeliverInput) -> DeliverOutput:
         started = _now()
@@ -403,11 +411,27 @@ class DeliverStage:
         if context.mode == "shadow":
             return self._result(started, False, True, None, (), "", "shadow_mode")
 
-        send_result = await self._push_tool.execute(
-            channel=context.target.channel,
-            chat_id=context.target.chat_id,
-            message=resolved.message,
-        )
+        acquired = True
+        if self._coordinator is not None:
+            acquired = self._coordinator.try_enter_proactive(
+                context.target.session_key, trace_id=context.tick_id
+            )
+        if not acquired:
+            return self._result(
+                started, False, False, None, (), "", "passive_busy_race"
+            )
+
+        try:
+            send_result = await self._push_tool.execute(
+                channel=context.target.channel,
+                chat_id=context.target.chat_id,
+                message=resolved.message,
+            )
+        finally:
+            if self._coordinator is not None:
+                self._coordinator.exit_proactive(
+                    context.target.session_key, trace_id=context.tick_id
+                )
         if not _push_succeeded(send_result):
             return self._result(
                 started, False, False, None, (), send_result, "send_failed"

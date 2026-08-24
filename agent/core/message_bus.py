@@ -24,6 +24,7 @@ class MessageBus:
         self._sequence = itertools.count()
         self._subscribers: dict[str, list[EnvelopeHandler]] = {}
         self._dispatch_task: asyncio.Task[None] | None = None
+        self._delivery_waiters: dict[str, asyncio.Future[bool]] = {}
         self._stopping = False
 
     async def publish_inbound(self, envelope: MessageEnvelope) -> bool:
@@ -41,6 +42,20 @@ class MessageBus:
             return False
         await self._put(self._outbound, envelope)
         return True
+
+    async def publish_outbound_and_wait(self, envelope: MessageEnvelope) -> bool:
+        """Publish and wait until the channel adapter has completed delivery."""
+        loop = asyncio.get_running_loop()
+        waiter = loop.create_future()
+        self._delivery_waiters[envelope.message_id] = waiter
+        admitted = await self.publish_outbound(envelope)
+        if not admitted:
+            self._delivery_waiters.pop(envelope.message_id, None)
+            return False
+        try:
+            return await waiter
+        finally:
+            self._delivery_waiters.pop(envelope.message_id, None)
 
     async def consume_inbound(self) -> MessageEnvelope:
         _, _, envelope = await self._inbound.get()
@@ -87,6 +102,7 @@ class MessageBus:
             if not handlers:
                 logger.error("No outbound subscriber for channel=%s", envelope.channel)
                 self.store.mark(envelope.message_id, "failed", increment_attempts=True)
+                self._settle_delivery(envelope.message_id, False)
                 continue
             self.store.mark(envelope.message_id, "running", increment_attempts=True)
             try:
@@ -94,12 +110,20 @@ class MessageBus:
                     await handler(envelope)
             except asyncio.CancelledError:
                 self.store.mark(envelope.message_id, "queued")
+                self._settle_delivery(envelope.message_id, False)
                 raise
             except Exception:
                 logger.exception("Outbound delivery failed message_id=%s", envelope.message_id)
                 self.store.mark(envelope.message_id, "failed")
+                self._settle_delivery(envelope.message_id, False)
             else:
                 self.store.mark(envelope.message_id, "done")
+                self._settle_delivery(envelope.message_id, True)
+
+    def _settle_delivery(self, message_id: str, success: bool) -> None:
+        waiter = self._delivery_waiters.get(message_id)
+        if waiter is not None and not waiter.done():
+            waiter.set_result(success)
 
     @property
     def inbound_size(self) -> int:

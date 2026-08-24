@@ -11,6 +11,7 @@
 - 🌐 **联网检索**：内置 `web_search` 和安全版 `web_fetch`，支持时效性搜索、来源核实和 URL 引用
 - 🧩 **插件生命周期**：支持 Akashic 风格 PhaseModule、slot export、prompt_render 插入点
 - 📡 **主动 Agent**：五阶段主动链读取用户长期兴趣，支持三类 MCP Source、个性化内容判断、自适应调度、五层去重和可恢复精确 ACK
+- 💤 **三模式协调**：Passive > Proactive > Idle；用户消息可暂停并恢复持久化后台维护任务
 
 ## 技术栈
 
@@ -98,6 +99,18 @@ PROACTIVE_COLD_START_THRESHOLD=0.9
 ```
 
 主动检查间隔会根据空 Tick、Source 错误、告警新鲜度和被动会话忙碌状态自动调整。Telegram 发送成功后写入 ACK Outbox；独立 ACK Worker 按指数退避重试，超过最大次数进入 `dead`，不会重新发送 Telegram 消息。
+
+M11 使用 `ModeCoordinator` 统一协调三种工作模式。Passive 用户消息优先级最高，
+会暂停正在运行的 Idle Task，并阻止同一 Session 的普通 Proactive 投递；本轮回复真正
+发送完成后，系统恢复可恢复的 Idle Task，并唤醒主动调度器重新计算下一次 Tick。
+Idle Task 状态和断点保存在 `idle_tasks` 表中，进程重启后 `running` 会恢复为
+`paused`。第一版只允许 `local_read` 和 `local_maintenance` 权限，不能借 Idle
+模式发送消息或修改外部服务。
+
+```dotenv
+IDLE_TASKS_ENABLED=true
+IDLE_TASK_POLL_SECONDS=5
+```
 
 请勿提交 `.env`、数据库、运行日志或用户对话数据；这些内容已由 `.gitignore` 排除。
 

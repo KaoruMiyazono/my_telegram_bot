@@ -30,6 +30,7 @@ class ProactiveLoop:
         self._running = False
         self._task: asyncio.Task[None] | None = None
         self._ack_task: asyncio.Task[None] | None = None
+        self._wake = asyncio.Event()
 
     async def run_once(self) -> ProactiveTickResult | None:
         return await self._agent_tick.tick()
@@ -48,7 +49,11 @@ class ProactiveLoop:
                     1,
                     int((result.next_check_at - datetime.now(timezone.utc)).total_seconds()),
                 )
-            await asyncio.sleep(delay)
+            self._wake.clear()
+            try:
+                await asyncio.wait_for(self._wake.wait(), timeout=delay)
+            except TimeoutError:
+                pass
 
     async def run_ack_worker(self) -> None:
         while self._running:
@@ -69,6 +74,11 @@ class ProactiveLoop:
 
     def stop(self) -> None:
         self._running = False
+        self._wake.set()
+
+    def wake(self) -> None:
+        """Recompute immediately after a passive turn changes runtime state."""
+        self._wake.set()
 
     async def close(self) -> None:
         self.stop()

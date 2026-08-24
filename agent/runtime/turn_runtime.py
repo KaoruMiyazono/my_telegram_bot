@@ -15,6 +15,7 @@ from agent.core.session_lane import SessionLaneManager
 from agent.core.types import OutboundMessage
 from agent.pipeline.passive_turn import PassiveTurnPipeline
 from agent.runtime.cancellation import CancellationRegistry, InterruptResult
+from agent.runtime.mode_coordinator import ModeCoordinator
 
 logger = logging.getLogger(__name__)
 
@@ -28,10 +29,12 @@ class TurnRuntime:
         bus: MessageBus,
         pipeline: PassiveTurnPipeline,
         cancellation: CancellationRegistry | None = None,
+        mode_coordinator: ModeCoordinator | None = None,
     ) -> None:
         self.bus = bus
         self.pipeline = pipeline
         self.cancellation = cancellation or CancellationRegistry()
+        self.mode_coordinator = mode_coordinator
         self.lanes = SessionLaneManager(
             self._execute,
             self.cancellation,
@@ -76,9 +79,18 @@ class TurnRuntime:
 
     async def _execute(self, envelope: MessageEnvelope) -> object:
         self.bus.store.mark(envelope.message_id, "running", increment_attempts=True)
+        trace_id = str(envelope.payload.get("trace_id") or envelope.message_id)
+        if self.mode_coordinator is not None:
+            await self.mode_coordinator.enter_passive(
+                envelope.session_key, trace_id=trace_id
+            )
         try:
             outbound = await self.pipeline.execute(envelope.as_inbound())
-            await self.bus.publish_outbound(envelope_from_outbound(outbound, inbound=envelope))
+            delivered = await self.bus.publish_outbound_and_wait(
+                envelope_from_outbound(outbound, inbound=envelope)
+            )
+            if not delivered:
+                raise RuntimeError("outbound delivery failed")
         except asyncio.CancelledError:
             self.bus.store.mark(envelope.message_id, "cancelled")
             raise
@@ -87,6 +99,11 @@ class TurnRuntime:
             raise
         else:
             self.bus.store.mark(envelope.message_id, "done")
+        finally:
+            if self.mode_coordinator is not None:
+                self.mode_coordinator.exit_passive(
+                    envelope.session_key, trace_id=trace_id
+                )
         return outbound
 
     async def _handle_interrupt(self, envelope: MessageEnvelope) -> None:

@@ -143,6 +143,25 @@ CREATE TABLE IF NOT EXISTS mcp_runtime_servers (
 
 CREATE INDEX IF NOT EXISTS idx_mcp_runtime_servers_status
 ON mcp_runtime_servers(status, updated_at);
+
+-- Lowest-priority, resumable local maintenance work (M11).
+CREATE TABLE IF NOT EXISTS idle_tasks (
+    task_id TEXT PRIMARY KEY,
+    task_type TEXT NOT NULL,
+    session_key TEXT,
+    priority INTEGER NOT NULL DEFAULT 100,
+    status TEXT NOT NULL CHECK(status IN ('queued', 'running', 'paused', 'done', 'failed')),
+    checkpoint_json TEXT,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    not_before TEXT NOT NULL,
+    trace_id TEXT NOT NULL DEFAULT '',
+    last_error TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_idle_tasks_ready
+ON idle_tasks(status, not_before, priority, created_at);
 """
 
 

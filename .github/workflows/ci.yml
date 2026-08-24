@@ -42,6 +42,8 @@ jobs:
             agent/core/session_lane.py \
             agent/runtime/turn_runtime.py \
             agent/runtime/cancellation.py \
+            agent/runtime/mode_coordinator.py \
+            agent/runtime/idle_tasks.py \
             agent/tools/web_search.py \
             agent/tools/web_fetch.py \
             agent/tools/web.py \

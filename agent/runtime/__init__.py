@@ -3,11 +3,23 @@
 from typing import TYPE_CHECKING, Any
 
 from agent.runtime.cancellation import CancellationRegistry, InterruptResult
+from agent.runtime.idle_tasks import IdleTask, IdleTaskResult, IdleTaskRuntime, IdleTaskStore
+from agent.runtime.mode_coordinator import ModeCoordinator, ModeTransition
 
 if TYPE_CHECKING:
     from agent.runtime.turn_runtime import TurnRuntime
 
-__all__ = ["CancellationRegistry", "InterruptResult", "TurnRuntime"]
+__all__ = [
+    "CancellationRegistry",
+    "IdleTask",
+    "IdleTaskResult",
+    "IdleTaskRuntime",
+    "IdleTaskStore",
+    "InterruptResult",
+    "ModeCoordinator",
+    "ModeTransition",
+    "TurnRuntime",
+]
 
 
 def __getattr__(name: str) -> Any:

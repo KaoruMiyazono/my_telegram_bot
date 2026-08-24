@@ -33,6 +33,7 @@ from proactive_v2.stages import (
     JudgeTool,
     InterestReader,
     ResolveStage,
+    DeliveryCoordinator,
 )
 from proactive_v2.state import ProactiveStateStore
 
@@ -76,6 +77,7 @@ class AgentTick:
         ack_max_attempts: int = 5,
         ack_retry_base_seconds: int = 30,
         ack_retry_max_seconds: int = 3600,
+        mode_coordinator: DeliveryCoordinator | None = None,
     ) -> None:
         self._channel = default_channel
         self._chat_id = str(default_chat_id)
@@ -106,6 +108,7 @@ class AgentTick:
             self._state,
             push_tool,
             ack_dispatcher=self._acks,
+            coordinator=mode_coordinator,
         )
         self._scheduler = scheduler or AdaptiveScheduler(self._policy)
         self.last_result: ProactiveTickResult | None = None
