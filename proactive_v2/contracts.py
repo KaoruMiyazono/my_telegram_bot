@@ -33,10 +33,18 @@ class ProactivePolicy:
     delivery_dedupe_hours: int = 48
     semantic_dedupe_hours: int = 24
     semantic_similarity_threshold: float = 0.88
+    content_dedupe_hours: int = 168
     max_judge_steps: int = 2
+    cold_start_threshold: float = 0.9
     normal_interval_seconds: int = 300
     blocked_interval_seconds: int = 60
     empty_interval_seconds: int = 600
+    empty_backoff_multiplier: float = 2.0
+    empty_backoff_max_seconds: int = 2400
+    error_backoff_base_seconds: int = 60
+    error_backoff_max_seconds: int = 1800
+    alert_interval_seconds: int = 60
+    schedule_jitter_ratio: float = 0.1
 
 
 @dataclass(frozen=True)
@@ -57,6 +65,28 @@ class PhaseTrace:
     outcome: str
     reason: str
     details: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class UserInterestContext:
+    """Small, user-scoped projection of long-term memory for proactive judging."""
+
+    user_id: str = ""
+    positive_topics: tuple[str, ...] = ()
+    negative_topics: tuple[str, ...] = ()
+    important_rules: tuple[str, ...] = ()
+    profile_facts: tuple[str, ...] = ()
+    memory_evidence: tuple[str, ...] = ()
+    source_count: int = 0
+    truncated: bool = False
+
+    @property
+    def cold_start(self) -> bool:
+        return not (
+            self.positive_topics
+            or self.negative_topics
+            or self.important_rules
+        )
 
 
 @dataclass(frozen=True)
@@ -98,6 +128,8 @@ class JudgeProposal:
     score: float = 0.0
     reason: str = ""
     evidence: tuple[str, ...] = ()
+    reasoning_evidence: tuple[str, ...] = ()
+    details: dict[str, Any] = field(default_factory=dict)
     tool_calls: tuple[JudgeToolCall, ...] = ()
 
 
@@ -105,6 +137,7 @@ class JudgeProposal:
 class JudgeInput:
     context: AgentTickContext
     fetched: FetchOutput
+    interests: UserInterestContext = field(default_factory=UserInterestContext)
     tool_results: tuple[dict[str, Any], ...] = ()
 
 
@@ -131,6 +164,7 @@ class ResolveOutput:
     message: str
     score: float
     evidence: tuple[str, ...]
+    reasoning_evidence: tuple[str, ...]
     delivery_key: str
     trace: PhaseTrace
 
@@ -160,10 +194,13 @@ class ProactiveTickResult:
     reason: str
     message: str = ""
     evidence: list[str] = field(default_factory=list)
+    reasoning_evidence: list[str] = field(default_factory=list)
     gateway: Any = None
     mode: ProactiveMode = "shadow"
     delivery_key: str = ""
     next_check_at: datetime | None = None
+    next_interval_seconds: int = 0
+    schedule_reason: str = ""
     traces: list[PhaseTrace] = field(default_factory=list)
     ack_outbox_ids: list[int] = field(default_factory=list)
     error: str = ""

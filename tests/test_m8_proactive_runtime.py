@@ -232,7 +232,7 @@ async def test_shadow_records_trace_without_sending_or_delivery() -> None:
 async def test_event_and_semantic_dedupe_prevent_repeat_push() -> None:
     state = ProactiveStateStore(":memory:")
     events: list[object] = []
-    current = {"id": "same", "title": "重要提醒"}
+    current = {"id": "same", "title": "今天下午三点有一个非常重要的会议提醒，请准时参加"}
 
     async def alerts() -> list[dict[str, str]]:
         return [dict(current)]
@@ -243,7 +243,7 @@ async def test_event_and_semantic_dedupe_prevent_repeat_push() -> None:
         default_chat_id="42",
         session_key="dedupe",
         mode="live",
-        policy=policy(),
+        policy=policy(semantic_similarity_threshold=0.8),
         state_store=state,
     )
     first = await tick.tick()
@@ -252,6 +252,7 @@ async def test_event_and_semantic_dedupe_prevent_repeat_push() -> None:
     assert second is not None and second.reason == "event_duplicate"
 
     current["id"] = "different"
+    current["title"] = "今天下午三点有一个非常重要的会议提醒，请记得准时参加"
     third = await tick.tick()
     assert third is not None and third.reason == "semantic_duplicate"
     assert len(events) == 1

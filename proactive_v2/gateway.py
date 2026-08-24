@@ -16,6 +16,7 @@ class GatewayResult:
     content_store: dict[str, str] = field(default_factory=dict)
     source_failures: dict[str, str] = field(default_factory=dict)
     quarantined: list[dict[str, Any]] = field(default_factory=list)
+    source_duplicates: list[str] = field(default_factory=list)
 
 
 class ProactiveGateway(Protocol):

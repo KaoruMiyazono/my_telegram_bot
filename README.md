@@ -10,7 +10,7 @@
 - 🤖 **工具调用**：通过 ToolRegistry / ToolExecutor 统一调度内置记忆工具和插件工具
 - 🌐 **联网检索**：内置 `web_search` 和安全版 `web_fetch`，支持时效性搜索、来源核实和 URL 引用
 - 🧩 **插件生命周期**：支持 Akashic 风格 PhaseModule、slot export、prompt_render 插入点
-- 📡 **主动 Agent**：Gate/Fetch/Judge/Resolve/Deliver 五阶段链，支持三类 MCP Source、Shadow、去重和精确 ACK
+- 📡 **主动 Agent**：五阶段主动链读取用户长期兴趣，支持三类 MCP Source、个性化内容判断、自适应调度、五层去重和可恢复精确 ACK
 
 ## 技术栈
 
@@ -87,6 +87,17 @@ PROACTIVE_SOURCE_CONFIG_PATH=./config/proactive_sources.toml
 ```
 
 本地 `proactive_demo` Server 和三个示例 Source 默认均为 disabled，不会自动发送测试数据。
+
+M10 会按 `PROACTIVE_USER_ID` 读取该用户的 active
+`preference/profile/procedure` 长期记忆。明确负向偏好优先于 Provider 热度；没有兴趣记忆时进入严格冷启动，只允许标记为 `interesting` 且达到
+`PROACTIVE_COLD_START_THRESHOLD` 的高置信内容。模糊内容默认安全跳过；需要 LLM 辅助判断时显式开启：
+
+```dotenv
+PROACTIVE_LLM_JUDGE_ENABLED=true
+PROACTIVE_COLD_START_THRESHOLD=0.9
+```
+
+主动检查间隔会根据空 Tick、Source 错误、告警新鲜度和被动会话忙碌状态自动调整。Telegram 发送成功后写入 ACK Outbox；独立 ACK Worker 按指数退避重试，超过最大次数进入 `dead`，不会重新发送 Telegram 消息。
 
 请勿提交 `.env`、数据库、运行日志或用户对话数据；这些内容已由 `.gitignore` 排除。
 

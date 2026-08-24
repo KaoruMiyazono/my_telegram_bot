@@ -17,11 +17,19 @@ class ProactiveLoop:
     can use different schedules without changing the five-stage pipeline.
     """
 
-    def __init__(self, agent_tick: AgentTick, *, interval_seconds: int = 300) -> None:
+    def __init__(
+        self,
+        agent_tick: AgentTick,
+        *,
+        interval_seconds: int = 300,
+        ack_interval_seconds: int = 30,
+    ) -> None:
         self._agent_tick = agent_tick
         self._interval_seconds = max(1, int(interval_seconds))
+        self._ack_interval_seconds = max(1, int(ack_interval_seconds))
         self._running = False
         self._task: asyncio.Task[None] | None = None
+        self._ack_task: asyncio.Task[None] | None = None
 
     async def run_once(self) -> ProactiveTickResult | None:
         return await self._agent_tick.tick()
@@ -42,9 +50,22 @@ class ProactiveLoop:
                 )
             await asyncio.sleep(delay)
 
+    async def run_ack_worker(self) -> None:
+        while self._running:
+            try:
+                await self._agent_tick.drain_acks()
+            except Exception:
+                logger.exception("Proactive ACK worker failed")
+            await asyncio.sleep(self._ack_interval_seconds)
+
     def start(self) -> None:
+        self._running = True
         if self._task is None or self._task.done():
             self._task = asyncio.create_task(self.run(), name="proactive-loop")
+        if self._ack_task is None or self._ack_task.done():
+            self._ack_task = asyncio.create_task(
+                self.run_ack_worker(), name="proactive-ack-worker"
+            )
 
     def stop(self) -> None:
         self._running = False
@@ -55,6 +76,12 @@ class ProactiveLoop:
             self._task.cancel()
             try:
                 await self._task
+            except asyncio.CancelledError:
+                pass
+        if self._ack_task is not None:
+            self._ack_task.cancel()
+            try:
+                await self._ack_task
             except asyncio.CancelledError:
                 pass
         self._agent_tick.close()

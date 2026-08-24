@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import hashlib
+import asyncio
 import inspect
 import json
+import logging
 import re
 from collections.abc import Awaitable, Callable, Mapping
 from datetime import datetime, timedelta, timezone
@@ -23,14 +25,25 @@ from proactive_v2.contracts import (
     PhaseTrace,
     ResolveInput,
     ResolveOutput,
+    UserInterestContext,
 )
 from proactive_v2.gateway import GatewayResult
+from proactive_v2.interests import (
+    AmbiguousInterestJudge,
+    deterministic_interest_score,
+    merge_context_interests,
+)
 from proactive_v2.state import ProactiveStateStore
+
+logger = logging.getLogger(__name__)
 
 BusyFn = Callable[[str], bool]
 JudgeFn = Callable[[JudgeInput], JudgeProposal | Awaitable[JudgeProposal]]
 JudgeTool = Callable[..., Any]
 AckHandler = Callable[[str, str], Any]
+InterestReader = Callable[
+    [str], UserInterestContext | Awaitable[UserInterestContext]
+]
 
 
 class GateStage:
@@ -126,13 +139,24 @@ class JudgeStage:
         judge_fn: JudgeFn | None = None,
         *,
         tools: Mapping[str, JudgeTool] | None = None,
+        interest_reader: InterestReader | None = None,
+        ambiguous_interest_judge: AmbiguousInterestJudge | None = None,
     ) -> None:
         self._judge_fn = judge_fn
         self._tools = dict(tools or {})
+        self._interest_reader = interest_reader
+        self._ambiguous_interest_judge = ambiguous_interest_judge
 
     async def run(self, value: JudgeInput) -> JudgeOutput:
         started = _now()
-        current = value
+        interests = await self._read_interests(value)
+        interests = merge_context_interests(interests, value.fetched.snapshot.context)
+        current = JudgeInput(
+            context=value.context,
+            fetched=value.fetched,
+            interests=interests,
+            tool_results=value.tool_results,
+        )
         results: list[dict[str, Any]] = list(value.tool_results)
         proposal = await self._decide(current)
         steps = 0
@@ -156,6 +180,7 @@ class JudgeStage:
             current = JudgeInput(
                 context=value.context,
                 fetched=value.fetched,
+                interests=interests,
                 tool_results=tuple(results),
             )
             proposal = await self._decide(current)
@@ -166,6 +191,8 @@ class JudgeStage:
                 score=0.0,
                 reason="judge_tool_limit",
                 evidence=proposal.evidence,
+                reasoning_evidence=proposal.reasoning_evidence,
+                details=proposal.details,
             )
         return JudgeOutput(
             proposal=proposal,
@@ -176,17 +203,40 @@ class JudgeStage:
                 started,
                 proposal.decision,
                 proposal.reason,
-                {"score": proposal.score, "tool_steps": steps},
+                {
+                    "score": proposal.score,
+                    "tool_steps": steps,
+                    "interest_source_count": interests.source_count,
+                    "interest_cold_start": interests.cold_start,
+                    "interest_truncated": interests.truncated,
+                    **proposal.details,
+                },
             ),
         )
 
     async def _decide(self, value: JudgeInput) -> JudgeProposal:
         if self._judge_fn is None:
-            return _default_judge(value)
+            return await _default_judge(value, self._ambiguous_interest_judge)
         result = self._judge_fn(value)
         if inspect.isawaitable(result):
             result = await result
         return result
+
+    async def _read_interests(self, value: JudgeInput) -> UserInterestContext:
+        if self._interest_reader is None or not value.context.target.user_id:
+            return value.interests
+        try:
+            result = self._interest_reader(value.context.target.user_id)
+            if inspect.isawaitable(result):
+                result = await result
+            return result
+        except Exception as exc:
+            logger.warning(
+                "[proactive.judge] interest read failed user_id=%s error=%s",
+                value.context.target.user_id,
+                exc,
+            )
+            return UserInterestContext(user_id=value.context.target.user_id)
 
 
 class ResolveStage:
@@ -201,6 +251,7 @@ class ResolveStage:
         reason = proposal.reason
         message = proposal.message.strip()
         evidence = tuple(dict.fromkeys(proposal.evidence))
+        reasoning_evidence = tuple(dict.fromkeys(proposal.reasoning_evidence))
         delivery_key = _delivery_key(evidence, message)
 
         if not value.gate.allowed:
@@ -211,6 +262,34 @@ class ResolveStage:
             action, reason = "skip", "empty_message"
         elif proposal.score < context.policy.threshold:
             action, reason = "skip", "below_threshold"
+        elif evidence and self._state.delivered_events(
+            context.target.session_key, evidence
+        ) == set(evidence):
+            action, reason = "skip", "event_duplicate"
+        elif self._state.delivery_key_seen(
+            context.target.session_key,
+            delivery_key,
+            now=context.started_at,
+            window_hours=context.policy.delivery_dedupe_hours,
+        ):
+            action, reason = "skip", "delivery_duplicate"
+        elif self._state.content_hash_seen(
+            context.target.session_key,
+            message,
+            now=context.started_at,
+            window_hours=context.policy.content_dedupe_hours,
+        ):
+            action, reason = "skip", "content_duplicate"
+        elif any(
+            _similarity(message, previous)
+            >= context.policy.semantic_similarity_threshold
+            for previous in self._state.recent_messages(
+                context.target.session_key,
+                now=context.started_at,
+                window_hours=context.policy.semantic_dedupe_hours,
+            )
+        ):
+            action, reason = "skip", "semantic_duplicate"
         elif self._state.count_deliveries_since(
             context.target.session_key,
             context.started_at
@@ -228,27 +307,6 @@ class ResolveStage:
             and context.policy.urgent_bypass_daily_limit
         ):
             action, reason = "skip", "daily_limit"
-        elif evidence and self._state.delivered_events(
-            context.target.session_key, evidence
-        ) == set(evidence):
-            action, reason = "skip", "event_duplicate"
-        elif self._state.delivery_key_seen(
-            context.target.session_key,
-            delivery_key,
-            now=context.started_at,
-            window_hours=context.policy.delivery_dedupe_hours,
-        ):
-            action, reason = "skip", "delivery_duplicate"
-        elif any(
-            _similarity(message, previous)
-            >= context.policy.semantic_similarity_threshold
-            for previous in self._state.recent_messages(
-                context.target.session_key,
-                now=context.started_at,
-                window_hours=context.policy.semantic_dedupe_hours,
-            )
-        ):
-            action, reason = "skip", "semantic_duplicate"
 
         return ResolveOutput(
             action=action,
@@ -256,13 +314,18 @@ class ResolveStage:
             message=message,
             score=proposal.score,
             evidence=evidence,
+            reasoning_evidence=reasoning_evidence,
             delivery_key=delivery_key,
             trace=_trace(
                 "resolve",
                 started,
                 action,
                 reason,
-                {"delivery_key": delivery_key, "evidence_count": len(evidence)},
+                {
+                    "delivery_key": delivery_key,
+                    "evidence_count": len(evidence),
+                    "reasoning_evidence_count": len(reasoning_evidence),
+                },
             ),
         )
 
@@ -272,28 +335,52 @@ class AckOutboxDispatcher:
         self,
         state: ProactiveStateStore,
         handlers: Mapping[str, AckHandler] | None = None,
+        *,
+        max_attempts: int = 5,
+        retry_base_seconds: int = 30,
+        retry_max_seconds: int = 3600,
     ) -> None:
         self._state = state
         self._handlers = dict(handlers or {})
+        self._max_attempts = max(1, int(max_attempts))
+        self._retry_base_seconds = max(1, int(retry_base_seconds))
+        self._retry_max_seconds = max(1, int(retry_max_seconds))
+        self._lock = asyncio.Lock()
 
-    async def drain(self, ack_ids: tuple[int, ...] | None = None) -> None:
-        selected = set(ack_ids or ())
-        for row in self._state.pending_acks():
-            ack_id = int(row["id"])
-            if selected and ack_id not in selected:
-                continue
-            handler = self._handlers.get(str(row["source_id"]))
-            if handler is None:
-                self._state.settle_ack(ack_id, success=False, error="ack_handler_missing")
-                continue
-            try:
-                result = handler(str(row["event_id"]), str(row["decision"]))
-                if inspect.isawaitable(result):
-                    await result
-            except Exception as exc:
-                self._state.settle_ack(ack_id, success=False, error=str(exc))
-            else:
-                self._state.settle_ack(ack_id, success=True)
+    async def drain(
+        self,
+        ack_ids: tuple[int, ...] | None = None,
+        *,
+        now: datetime | None = None,
+    ) -> None:
+        async with self._lock:
+            selected = set(ack_ids or ())
+            for row in self._state.pending_acks(now=now):
+                ack_id = int(row["id"])
+                if selected and ack_id not in selected:
+                    continue
+                handler = self._handlers.get(str(row["source_id"]))
+                if handler is None:
+                    self._settle_failure(ack_id, "ack_handler_missing")
+                    continue
+                try:
+                    result = handler(str(row["event_id"]), str(row["decision"]))
+                    if inspect.isawaitable(result):
+                        await result
+                except Exception as exc:
+                    self._settle_failure(ack_id, str(exc))
+                else:
+                    self._state.settle_ack(ack_id, success=True)
+
+    def _settle_failure(self, ack_id: int, error: str) -> None:
+        self._state.settle_ack(
+            ack_id,
+            success=False,
+            error=error,
+            max_attempts=self._max_attempts,
+            retry_base_seconds=self._retry_base_seconds,
+            retry_max_seconds=self._retry_max_seconds,
+        )
 
 
 class DeliverStage:
@@ -363,7 +450,10 @@ class DeliverStage:
         )
 
 
-def _default_judge(value: JudgeInput) -> JudgeProposal:
+async def _default_judge(
+    value: JudgeInput,
+    ambiguous_interest_judge: AmbiguousInterestJudge | None = None,
+) -> JudgeProposal:
     snapshot = value.fetched.snapshot
     alert_lines: list[str] = []
     evidence: list[str] = []
@@ -387,30 +477,96 @@ def _default_judge(value: JudgeInput) -> JudgeProposal:
         )
 
     content_lines: list[str] = []
+    selected_scores: list[float] = []
+    decision_details: list[dict[str, Any]] = []
+    reasoning_evidence: list[str] = []
     for item in snapshot.content_meta:
-        score = float(item.get("relevance_score") or item.get("score") or 0.0)
-        if not (item.get("interesting") is True or score >= value.context.policy.threshold):
-            continue
+        provider_score = float(item.get("relevance_score") or item.get("score") or 0.0)
         item_id = str(item.get("id") or "")
         title = str(item.get("title") or "").strip()
         body = str(snapshot.content_store.get(item_id) or "").strip()
+        if value.interests.cold_start:
+            if not (
+                item.get("interesting") is True
+                and provider_score >= value.context.policy.cold_start_threshold
+            ):
+                decision_details.append(
+                    {
+                        "item_id": item_id,
+                        "provider_score": provider_score,
+                        "user_score": 0.0,
+                        "reason": "cold_start_filtered",
+                    }
+                )
+                continue
+            personalized = None
+            user_score = provider_score
+            score_reason = "cold_start_high_confidence"
+        else:
+            personalized = deterministic_interest_score(
+                title=title,
+                body=body,
+                provider_score=provider_score,
+                interests=value.interests,
+            )
+            if personalized is None and ambiguous_interest_judge is not None:
+                try:
+                    personalized = await ambiguous_interest_judge.score(
+                        title=title,
+                        body=body,
+                        provider_score=provider_score,
+                        interests=value.interests,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "[proactive.judge] ambiguous interest failed item=%s error=%s",
+                        item_id,
+                        exc,
+                    )
+            user_score = personalized.score if personalized is not None else provider_score * 0.25
+            score_reason = personalized.reason if personalized is not None else "no_user_interest_match"
+            if personalized is not None and personalized.rejected:
+                decision_details.append(
+                    {
+                        "item_id": item_id,
+                        "provider_score": provider_score,
+                        "user_score": user_score,
+                        "reason": score_reason,
+                    }
+                )
+                continue
+        decision_details.append(
+            {
+                "item_id": item_id,
+                "provider_score": provider_score,
+                "user_score": user_score,
+                "reason": score_reason,
+            }
+        )
+        if user_score < value.context.policy.threshold:
+            continue
         if item_id:
             evidence.append(item_id)
         content_lines.append(f"{title}\n{body}".strip()[:2000])
+        selected_scores.append(user_score)
+        reasoning_evidence.extend(value.interests.memory_evidence)
     message = "\n\n".join(line for line in content_lines if line).strip()
     if message:
         return JudgeProposal(
             decision="reply",
             message=message,
-            score=0.8,
-            reason="relevant_content",
+            score=max(selected_scores, default=0.0),
+            reason="personalized_content",
             evidence=tuple(evidence),
+            reasoning_evidence=tuple(dict.fromkeys(reasoning_evidence)),
+            details={"content_scores": decision_details},
         )
     # Context is only supporting evidence; it must never create a push itself.
     return JudgeProposal(
         decision="skip",
         score=0.0,
         reason="context_only" if snapshot.context else "no_candidate",
+        details={"content_scores": decision_details},
     )
 
 

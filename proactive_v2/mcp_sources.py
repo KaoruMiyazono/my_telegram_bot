@@ -197,6 +197,7 @@ class McpProactiveGateway:
             return_exceptions=True,
         )
         gateway = GatewayResult()
+        seen_events: set[str] = set()
         for spec, result in zip(specs, results):
             if isinstance(result, BaseException):
                 gateway.source_failures[spec.key] = str(result)
@@ -206,10 +207,20 @@ class McpProactiveGateway:
                     result,
                 )
                 continue
-            gateway.alerts.extend(result.alerts)
+            for alert in result.alerts:
+                compound = f"{alert.get('ack_server')}:{alert.get('event_id')}"
+                if compound in seen_events:
+                    gateway.source_duplicates.append(compound)
+                    continue
+                seen_events.add(compound)
+                gateway.alerts.append(alert)
             gateway.context.extend(result.context)
             for item in result.content:
                 item_id = str(item["_compound_key"])
+                if item_id in seen_events:
+                    gateway.source_duplicates.append(item_id)
+                    continue
+                seen_events.add(item_id)
                 body = str(item.pop("_content_body", ""))
                 item.pop("_compound_key", None)
                 gateway.content_meta.append(item)

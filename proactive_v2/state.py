@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import sqlite3
 import threading
 from datetime import datetime, timedelta, timezone
@@ -16,6 +17,7 @@ CREATE TABLE IF NOT EXISTS proactive_deliveries (
     session_key TEXT NOT NULL,
     delivery_key TEXT NOT NULL,
     message TEXT NOT NULL,
+    content_hash TEXT NOT NULL DEFAULT '',
     priority TEXT NOT NULL,
     sent_at TEXT NOT NULL,
     UNIQUE(session_key, delivery_key)
@@ -37,15 +39,15 @@ CREATE TABLE IF NOT EXISTS proactive_ack_outbox (
     source_id TEXT NOT NULL,
     event_id TEXT NOT NULL,
     decision TEXT NOT NULL,
-    status TEXT NOT NULL CHECK(status IN ('pending', 'acked', 'failed')),
+    status TEXT NOT NULL CHECK(status IN ('pending', 'acked', 'failed', 'dead')),
     attempts INTEGER NOT NULL DEFAULT 0,
+    next_retry_at TEXT,
     last_error TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
+    acked_at TEXT,
     UNIQUE(source_id, event_id, decision)
 );
-CREATE INDEX IF NOT EXISTS idx_proactive_ack_status
-ON proactive_ack_outbox(status, created_at);
 
 CREATE TABLE IF NOT EXISTS proactive_tick_traces (
     tick_id TEXT PRIMARY KEY,
@@ -72,6 +74,7 @@ class ProactiveStateStore:
         self._lock = threading.RLock()
         with self._lock:
             self._db.executescript(_SCHEMA)
+            self._migrate_schema()
             self._db.commit()
 
     def close(self) -> None:
@@ -105,6 +108,24 @@ class ProactiveStateStore:
                 "SELECT 1 FROM proactive_deliveries "
                 "WHERE session_key = ? AND delivery_key = ? AND sent_at >= ?",
                 (session_key, delivery_key, cutoff.isoformat()),
+            ).fetchone()
+        return row is not None
+
+    def content_hash_seen(
+        self,
+        session_key: str,
+        message: str,
+        *,
+        now: datetime,
+        window_hours: int,
+    ) -> bool:
+        cutoff = _utc(now) - timedelta(hours=max(1, window_hours))
+        content_hash = _content_hash(message)
+        with self._lock:
+            row = self._db.execute(
+                "SELECT 1 FROM proactive_deliveries "
+                "WHERE session_key = ? AND content_hash = ? AND sent_at >= ?",
+                (session_key, content_hash, cutoff.isoformat()),
             ).fetchone()
         return row is not None
 
@@ -151,12 +172,13 @@ class ProactiveStateStore:
             try:
                 cursor = self._db.execute(
                     "INSERT INTO proactive_deliveries("
-                    "session_key, delivery_key, message, priority, sent_at"
-                    ") VALUES (?, ?, ?, ?, ?)",
+                    "session_key, delivery_key, message, content_hash, priority, sent_at"
+                    ") VALUES (?, ?, ?, ?, ?, ?)",
                     (
                         context.target.session_key,
                         delivery_key,
                         message,
+                        _content_hash(message),
                         context.priority,
                         now,
                     ),
@@ -176,9 +198,9 @@ class ProactiveStateStore:
                     ack_cursor = self._db.execute(
                         "INSERT OR IGNORE INTO proactive_ack_outbox("
                         "delivery_id, source_id, event_id, decision, status, "
-                        "attempts, created_at, updated_at"
-                        ") VALUES (?, ?, ?, 'delivered', 'pending', 0, ?, ?)",
-                        (delivery_id, source_id, event_id, now, now),
+                        "attempts, next_retry_at, created_at, updated_at"
+                        ") VALUES (?, ?, ?, 'delivered', 'pending', 0, ?, ?, ?)",
+                        (delivery_id, source_id, event_id, now, now, now),
                     )
                     if ack_cursor.rowcount == 1 and ack_cursor.lastrowid:
                         ack_ids.append(int(ack_cursor.lastrowid))
@@ -188,22 +210,69 @@ class ProactiveStateStore:
                 raise
         return delivery_id, tuple(ack_ids)
 
-    def pending_acks(self, *, limit: int = 100) -> list[sqlite3.Row]:
+    def pending_acks(
+        self,
+        *,
+        limit: int = 100,
+        now: datetime | None = None,
+    ) -> list[sqlite3.Row]:
+        due = _utc(now or datetime.now(timezone.utc)).isoformat()
         with self._lock:
             return self._db.execute(
                 "SELECT id, source_id, event_id, decision, attempts "
                 "FROM proactive_ack_outbox WHERE status IN ('pending', 'failed') "
+                "AND (next_retry_at IS NULL OR next_retry_at <= ?) "
                 "ORDER BY created_at LIMIT ?",
-                (max(1, limit),),
+                (due, max(1, limit)),
             ).fetchall()
 
-    def settle_ack(self, ack_id: int, *, success: bool, error: str = "") -> None:
-        now = datetime.now(timezone.utc).isoformat()
+    def settle_ack(
+        self,
+        ack_id: int,
+        *,
+        success: bool,
+        error: str = "",
+        max_attempts: int = 5,
+        retry_base_seconds: int = 30,
+        retry_max_seconds: int = 3600,
+        now: datetime | None = None,
+    ) -> None:
+        current = _utc(now or datetime.now(timezone.utc))
         with self._lock:
+            row = self._db.execute(
+                "SELECT attempts FROM proactive_ack_outbox WHERE id = ?", (ack_id,)
+            ).fetchone()
+            if row is None:
+                return
+            attempts = int(row[0]) + 1
+            if success:
+                status = "acked"
+                next_retry_at = None
+                acked_at = current.isoformat()
+            else:
+                status = "dead" if attempts >= max(1, max_attempts) else "failed"
+                delay = min(
+                    max(1, retry_max_seconds),
+                    max(1, retry_base_seconds) * (2 ** max(0, attempts - 1)),
+                )
+                next_retry_at = (
+                    None
+                    if status == "dead"
+                    else (current + timedelta(seconds=delay)).isoformat()
+                )
+                acked_at = None
             self._db.execute(
                 "UPDATE proactive_ack_outbox SET status = ?, attempts = attempts + 1, "
-                "last_error = ?, updated_at = ? WHERE id = ?",
-                ("acked" if success else "failed", error or None, now, ack_id),
+                "next_retry_at = ?, last_error = ?, updated_at = ?, acked_at = ? "
+                "WHERE id = ?",
+                (
+                    status,
+                    next_retry_at,
+                    None if success else (error or "ack_failed"),
+                    current.isoformat(),
+                    acked_at,
+                    ack_id,
+                ),
             )
             self._db.commit()
 
@@ -213,6 +282,16 @@ class ProactiveStateStore:
                 "SELECT status FROM proactive_ack_outbox WHERE id = ?", (ack_id,)
             ).fetchone()
         return str(row[0]) if row is not None else None
+
+    def ack_record(self, ack_id: int) -> dict[str, object] | None:
+        with self._lock:
+            row = self._db.execute(
+                "SELECT id, delivery_id, source_id, event_id, decision, status, "
+                "attempts, next_retry_at, last_error, created_at, updated_at, acked_at "
+                "FROM proactive_ack_outbox WHERE id = ?",
+                (ack_id,),
+            ).fetchone()
+        return dict(row) if row is not None else None
 
     def delivery_count(self, session_key: str) -> int:
         with self._lock:
@@ -231,10 +310,13 @@ class ProactiveStateStore:
             "reason": result.reason,
             "message": result.message,
             "evidence": list(result.evidence),
+            "reasoning_evidence": list(result.reasoning_evidence),
             "delivery_key": result.delivery_key,
             "next_check_at": (
                 result.next_check_at.isoformat() if result.next_check_at else None
             ),
+            "next_interval_seconds": result.next_interval_seconds,
+            "schedule_reason": result.schedule_reason,
             "traces": [trace.__dict__ for trace in result.traces],
             "ack_outbox_ids": list(result.ack_outbox_ids),
             "error": result.error,
@@ -265,6 +347,89 @@ class ProactiveStateStore:
             ).fetchone()
         return json.loads(str(row[0])) if row is not None else None
 
+    def _migrate_schema(self) -> None:
+        delivery_columns = {
+            str(row[1]) for row in self._db.execute("PRAGMA table_info(proactive_deliveries)")
+        }
+        if "content_hash" not in delivery_columns:
+            self._db.execute(
+                "ALTER TABLE proactive_deliveries ADD COLUMN content_hash TEXT NOT NULL DEFAULT ''"
+            )
+            rows = self._db.execute(
+                "SELECT id, message FROM proactive_deliveries WHERE content_hash = ''"
+            ).fetchall()
+            for row in rows:
+                self._db.execute(
+                    "UPDATE proactive_deliveries SET content_hash = ? WHERE id = ?",
+                    (_content_hash(str(row[1])), int(row[0])),
+                )
+        ack_sql_row = self._db.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' "
+            "AND name = 'proactive_ack_outbox'"
+        ).fetchone()
+        ack_sql = str(ack_sql_row[0] or "") if ack_sql_row is not None else ""
+        if "'dead'" not in ack_sql:
+            self._rebuild_ack_outbox()
+        else:
+            columns = {
+                str(row[1])
+                for row in self._db.execute("PRAGMA table_info(proactive_ack_outbox)")
+            }
+            if "next_retry_at" not in columns:
+                self._db.execute(
+                    "ALTER TABLE proactive_ack_outbox ADD COLUMN next_retry_at TEXT"
+                )
+            if "acked_at" not in columns:
+                self._db.execute(
+                    "ALTER TABLE proactive_ack_outbox ADD COLUMN acked_at TEXT"
+                )
+        self._db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_proactive_delivery_content_hash "
+            "ON proactive_deliveries(session_key, content_hash, sent_at)"
+        )
+        self._db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_proactive_ack_status "
+            "ON proactive_ack_outbox(status, next_retry_at, created_at)"
+        )
+
+    def _rebuild_ack_outbox(self) -> None:
+        self._db.execute("DROP INDEX IF EXISTS idx_proactive_ack_status")
+        self._db.execute(
+            "ALTER TABLE proactive_ack_outbox RENAME TO proactive_ack_outbox_legacy"
+        )
+        self._db.execute(
+            """
+            CREATE TABLE proactive_ack_outbox (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                delivery_id INTEGER NOT NULL,
+                source_id TEXT NOT NULL,
+                event_id TEXT NOT NULL,
+                decision TEXT NOT NULL,
+                status TEXT NOT NULL CHECK(status IN ('pending', 'acked', 'failed', 'dead')),
+                attempts INTEGER NOT NULL DEFAULT 0,
+                next_retry_at TEXT,
+                last_error TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                acked_at TEXT,
+                UNIQUE(source_id, event_id, decision)
+            )
+            """
+        )
+        self._db.execute(
+            """
+            INSERT INTO proactive_ack_outbox (
+                id, delivery_id, source_id, event_id, decision, status,
+                attempts, next_retry_at, last_error, created_at, updated_at, acked_at
+            )
+            SELECT id, delivery_id, source_id, event_id, decision, status,
+                   attempts, updated_at, last_error, created_at, updated_at,
+                   CASE WHEN status = 'acked' THEN updated_at ELSE NULL END
+            FROM proactive_ack_outbox_legacy
+            """
+        )
+        self._db.execute("DROP TABLE proactive_ack_outbox_legacy")
+
 
 def split_compound_event_id(compound: str) -> tuple[str, str]:
     parts = str(compound).split(":", 2)
@@ -283,3 +448,8 @@ def _utc(value: datetime) -> datetime:
     if value.tzinfo is None:
         return value.replace(tzinfo=timezone.utc)
     return value.astimezone(timezone.utc)
+
+
+def _content_hash(message: str) -> str:
+    normalized = " ".join(str(message).casefold().split())
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()

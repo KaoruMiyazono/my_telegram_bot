@@ -1,6 +1,8 @@
 from proactive_v2.agent_tick import AgentTick, ProactiveDecision, ProactiveTickResult
 from proactive_v2.gateway import DataGateway, GatewayResult
 from proactive_v2.loop import ProactiveLoop, build_proactive_loop
+from proactive_v2.interests import MemoryInterestReader, OpenAIInterestJudge
+from proactive_v2.scheduler import AdaptiveScheduler, ScheduleDecision
 from proactive_v2.mcp_sources import (
     McpManagerSourceCaller,
     McpProactiveGateway,
@@ -13,6 +15,10 @@ __all__ = [
     "DataGateway",
     "GatewayResult",
     "ProactiveDecision",
+    "MemoryInterestReader",
+    "OpenAIInterestJudge",
+    "AdaptiveScheduler",
+    "ScheduleDecision",
     "ProactiveLoop",
     "McpManagerSourceCaller",
     "McpProactiveGateway",

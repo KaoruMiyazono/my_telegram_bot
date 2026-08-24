@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import inspect
 from collections.abc import Awaitable, Callable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Literal
 
 from agent.tools.message_push import MessagePushTool
@@ -21,6 +21,8 @@ from proactive_v2.contracts import (
     TickPriority,
 )
 from proactive_v2.gateway import GatewayResult, ProactiveGateway
+from proactive_v2.interests import AmbiguousInterestJudge
+from proactive_v2.scheduler import AdaptiveScheduler
 from proactive_v2.stages import (
     AckHandler,
     AckOutboxDispatcher,
@@ -29,6 +31,7 @@ from proactive_v2.stages import (
     GateStage,
     JudgeStage,
     JudgeTool,
+    InterestReader,
     ResolveStage,
 )
 from proactive_v2.state import ProactiveStateStore
@@ -66,7 +69,13 @@ class AgentTick:
         policy: ProactivePolicy | None = None,
         state_store: ProactiveStateStore | None = None,
         judge_tools: Mapping[str, JudgeTool] | None = None,
+        interest_reader: InterestReader | None = None,
+        ambiguous_interest_judge: AmbiguousInterestJudge | None = None,
         ack_handlers: Mapping[str, AckHandler] | None = None,
+        scheduler: AdaptiveScheduler | None = None,
+        ack_max_attempts: int = 5,
+        ack_retry_base_seconds: int = 30,
+        ack_retry_max_seconds: int = 3600,
     ) -> None:
         self._channel = default_channel
         self._chat_id = str(default_chat_id)
@@ -82,14 +91,23 @@ class AgentTick:
         self._judge = JudgeStage(
             self._adapt_legacy_decider(decision_fn) if decision_fn else None,
             tools=judge_tools,
+            interest_reader=interest_reader,
+            ambiguous_interest_judge=ambiguous_interest_judge,
         )
         self._resolve = ResolveStage(self._state)
-        dispatcher = AckOutboxDispatcher(self._state, ack_handlers)
+        self._acks = AckOutboxDispatcher(
+            self._state,
+            ack_handlers,
+            max_attempts=ack_max_attempts,
+            retry_base_seconds=ack_retry_base_seconds,
+            retry_max_seconds=ack_retry_max_seconds,
+        )
         self._deliver = DeliverStage(
             self._state,
             push_tool,
-            ack_dispatcher=dispatcher,
+            ack_dispatcher=self._acks,
         )
+        self._scheduler = scheduler or AdaptiveScheduler(self._policy)
         self.last_result: ProactiveTickResult | None = None
 
     @property
@@ -99,6 +117,8 @@ class AgentTick:
     async def tick(self) -> ProactiveTickResult | None:
         if not self._chat_id.strip():
             return None
+        # A previous process may have crashed after delivery but before remote ACK.
+        await self._acks.drain()
         context = AgentTickContext(
             target=ProactiveTarget(
                 channel=self._channel,
@@ -125,6 +145,7 @@ class AgentTick:
             reason=resolved.reason,
             message=resolved.message,
             evidence=list(resolved.evidence),
+            reasoning_evidence=list(resolved.reasoning_evidence),
             gateway=fetched.snapshot,
             mode=context.mode,
             delivery_key=resolved.delivery_key,
@@ -139,6 +160,13 @@ class AgentTick:
             ack_outbox_ids=list(delivered.ack_outbox_ids),
             error=delivered.error,
         )
+        schedule = self._scheduler.observe(result, now=context.started_at)
+        result = replace(
+            result,
+            next_check_at=schedule.next_check_at,
+            next_interval_seconds=schedule.interval_seconds,
+            schedule_reason=schedule.reason,
+        )
         self._state.record_tick(context, result)
         self.last_result = result
         return result
@@ -146,6 +174,9 @@ class AgentTick:
     def close(self) -> None:
         if self._owns_state:
             self._state.close()
+
+    async def drain_acks(self) -> None:
+        await self._acks.drain()
 
     @staticmethod
     def _adapt_legacy_decider(decision_fn: DecisionFn) -> Callable[[JudgeInput], Any]:

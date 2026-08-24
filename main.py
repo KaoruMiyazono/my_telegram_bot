@@ -32,6 +32,7 @@ from agent.tools.message_push import MessagePushTool
 from proactive_v2.agent_tick import AgentTick
 from proactive_v2.contracts import ProactivePolicy
 from proactive_v2.loop import ProactiveLoop
+from proactive_v2.interests import MemoryInterestReader, OpenAIInterestJudge
 from proactive_v2.mcp_sources import (
     McpManagerSourceCaller,
     McpProactiveGateway,
@@ -249,6 +250,29 @@ async def main() -> None:
             normal_interval_seconds=settings.PROACTIVE_INTERVAL_SECONDS,
             blocked_interval_seconds=settings.PROACTIVE_BLOCKED_INTERVAL_SECONDS,
             empty_interval_seconds=settings.PROACTIVE_EMPTY_INTERVAL_SECONDS,
+            cold_start_threshold=settings.PROACTIVE_COLD_START_THRESHOLD,
+            content_dedupe_hours=settings.PROACTIVE_CONTENT_DEDUPE_HOURS,
+            semantic_dedupe_hours=settings.PROACTIVE_SEMANTIC_DEDUPE_HOURS,
+            semantic_similarity_threshold=(
+                settings.PROACTIVE_SEMANTIC_SIMILARITY_THRESHOLD
+            ),
+            empty_backoff_multiplier=settings.PROACTIVE_EMPTY_BACKOFF_MULTIPLIER,
+            empty_backoff_max_seconds=settings.PROACTIVE_EMPTY_BACKOFF_MAX_SECONDS,
+            error_backoff_base_seconds=settings.PROACTIVE_ERROR_BACKOFF_BASE_SECONDS,
+            error_backoff_max_seconds=settings.PROACTIVE_ERROR_BACKOFF_MAX_SECONDS,
+            alert_interval_seconds=settings.PROACTIVE_ALERT_INTERVAL_SECONDS,
+            schedule_jitter_ratio=settings.PROACTIVE_SCHEDULE_JITTER_RATIO,
+        )
+        interest_reader = MemoryInterestReader(
+            memory_store,
+            memory_runtime.markdown.store,
+            max_items=settings.PROACTIVE_INTEREST_MAX_ITEMS,
+            max_chars=settings.PROACTIVE_INTEREST_MAX_CHARS,
+        )
+        ambiguous_interest_judge = (
+            OpenAIInterestJudge(OpenAITextProvider(), settings.LLM_MODEL)
+            if settings.PROACTIVE_LLM_JUDGE_ENABLED
+            else None
         )
         proactive_loop = ProactiveLoop(
             AgentTick(
@@ -262,9 +286,15 @@ async def main() -> None:
                 policy=policy,
                 state_store=proactive_state,
                 passive_busy_fn=turn_runtime.cancellation.is_active,
+                interest_reader=interest_reader.read,
+                ambiguous_interest_judge=ambiguous_interest_judge,
                 ack_handlers=proactive_gateway.ack_handlers(),
+                ack_max_attempts=settings.PROACTIVE_ACK_MAX_ATTEMPTS,
+                ack_retry_base_seconds=settings.PROACTIVE_ACK_RETRY_BASE_SECONDS,
+                ack_retry_max_seconds=settings.PROACTIVE_ACK_RETRY_MAX_SECONDS,
             ),
             interval_seconds=settings.PROACTIVE_INTERVAL_SECONDS,
+            ack_interval_seconds=settings.PROACTIVE_ACK_WORKER_INTERVAL_SECONDS,
         )
     try:
         await turn_runtime.start()
