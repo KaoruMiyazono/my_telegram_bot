@@ -76,6 +76,10 @@ class Settings(BaseSettings):
     PROACTIVE_ACK_RETRY_BASE_SECONDS: int = 30
     PROACTIVE_ACK_RETRY_MAX_SECONDS: int = 3600
     PROACTIVE_ACK_WORKER_INTERVAL_SECONDS: int = 30
+    PROACTIVE_NEWS_ENABLED: bool = False
+    PROACTIVE_NEWS_TOPICS: str = "AI Agent,大模型,人工智能"
+    PROACTIVE_NEWS_MAX_RESULTS: int = 5
+    PROACTIVE_NEWS_INTERVAL_SECONDS: int = 36_000
 
     # Generic MCP runtime
     MCP_CONFIG_PATH: str = "./config/mcp_servers.toml"

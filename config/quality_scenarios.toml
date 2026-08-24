@@ -62,6 +62,12 @@ title = "MCP Event 到主动推送与 ACK"
 patterns = ["tests/test_m9_proactive_mcp_sources.py::*", "tests/test_m10_personalized_proactive.py::*ack_outbox*"]
 
 [[scenario]]
+id = "e2e.periodic_news"
+tier = "e2e"
+title = "Exa 新闻检索到个性化推送、去重与 ACK"
+patterns = ["tests/test_periodic_news.py::*interest_dedupe_delivery_and_ack*"]
+
+[[scenario]]
 id = "e2e.idle_interrupt"
 tier = "e2e"
 title = "Idle Task 被被动会话中断并恢复"

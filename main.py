@@ -46,6 +46,13 @@ from proactive_v2.mcp_sources import (
     register_proactive_source_management_tools,
 )
 from proactive_v2.state import ProactiveStateStore
+from proactive_v2.periodic_news import (
+    CombinedProactiveGateway,
+    ExaPeriodicNewsGateway,
+    PeriodicNewsConfig,
+    parse_topics,
+)
+from agent.tools.web_search import WebSearchClient, WebSearchConfig
 
 # Configure logging
 logging.basicConfig(
@@ -293,10 +300,33 @@ async def main() -> None:
 
         push_tool.register_channel("telegram", text=send_proactive_text)
         proactive_state = ProactiveStateStore()
-        proactive_gateway = McpProactiveGateway(
+        mcp_proactive_gateway = McpProactiveGateway(
             McpManagerSourceCaller(mcp_manager),
             proactive_sources,
         )
+        proactive_gateways = [mcp_proactive_gateway]
+        proactive_ack_handlers = mcp_proactive_gateway.ack_handlers()
+        proactive_interval_seconds = settings.PROACTIVE_INTERVAL_SECONDS
+        if settings.PROACTIVE_NEWS_ENABLED:
+            news_gateway = ExaPeriodicNewsGateway(
+                WebSearchClient(
+                    WebSearchConfig(
+                        endpoint=settings.WEB_SEARCH_ENDPOINT,
+                        api_key=settings.SEARCH_API_KEY,
+                        proxy=settings.WEB_PROXY,
+                        timeout_s=settings.WEB_SEARCH_TIMEOUT,
+                        max_results=settings.PROACTIVE_NEWS_MAX_RESULTS,
+                    )
+                ),
+                PeriodicNewsConfig(
+                    topics=parse_topics(settings.PROACTIVE_NEWS_TOPICS),
+                    max_results=settings.PROACTIVE_NEWS_MAX_RESULTS,
+                ),
+            )
+            proactive_gateways.append(news_gateway)
+            proactive_ack_handlers.update(news_gateway.ack_handlers())
+            proactive_interval_seconds = settings.PROACTIVE_NEWS_INTERVAL_SECONDS
+        proactive_gateway = CombinedProactiveGateway(proactive_gateways)
         policy = ProactivePolicy(
             threshold=settings.PROACTIVE_THRESHOLD,
             cooldown_seconds=settings.PROACTIVE_COOLDOWN_SECONDS,
@@ -308,7 +338,7 @@ async def main() -> None:
             urgent_bypass_cooldown=settings.PROACTIVE_URGENT_BYPASS_COOLDOWN,
             urgent_bypass_quiet=settings.PROACTIVE_URGENT_BYPASS_QUIET,
             urgent_bypass_daily_limit=settings.PROACTIVE_URGENT_BYPASS_DAILY_LIMIT,
-            normal_interval_seconds=settings.PROACTIVE_INTERVAL_SECONDS,
+            normal_interval_seconds=proactive_interval_seconds,
             blocked_interval_seconds=settings.PROACTIVE_BLOCKED_INTERVAL_SECONDS,
             empty_interval_seconds=settings.PROACTIVE_EMPTY_INTERVAL_SECONDS,
             cold_start_threshold=settings.PROACTIVE_COLD_START_THRESHOLD,
@@ -349,13 +379,13 @@ async def main() -> None:
                 passive_busy_fn=mode_coordinator.is_passive_active,
                 interest_reader=interest_reader.read,
                 ambiguous_interest_judge=ambiguous_interest_judge,
-                ack_handlers=proactive_gateway.ack_handlers(),
+                ack_handlers=proactive_ack_handlers,
                 ack_max_attempts=settings.PROACTIVE_ACK_MAX_ATTEMPTS,
                 ack_retry_base_seconds=settings.PROACTIVE_ACK_RETRY_BASE_SECONDS,
                 ack_retry_max_seconds=settings.PROACTIVE_ACK_RETRY_MAX_SECONDS,
                 mode_coordinator=mode_coordinator,
             ),
-            interval_seconds=settings.PROACTIVE_INTERVAL_SECONDS,
+            interval_seconds=proactive_interval_seconds,
             ack_interval_seconds=settings.PROACTIVE_ACK_WORKER_INTERVAL_SECONDS,
         )
         mode_coordinator.attach_proactive_waker(proactive_loop.wake)

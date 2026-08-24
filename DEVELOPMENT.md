@@ -64,6 +64,17 @@ PROACTIVE_COLD_START_THRESHOLD=0.9
 
 主动决策读取目标用户 active 的 `preference/profile/procedure` 长期记忆。明确负向偏好优先于 Provider 热度；没有兴趣记忆时进入严格冷启动。发送成功后写入 ACK Outbox，独立 Worker 只重试 Provider ACK，不重复发送 Telegram。
 
+启用周期性 Exa 新闻摘要：
+
+```dotenv
+PROACTIVE_NEWS_ENABLED=true
+PROACTIVE_NEWS_TOPICS=AI Agent,大模型,人工智能
+PROACTIVE_NEWS_MAX_RESULTS=5
+PROACTIVE_NEWS_INTERVAL_SECONDS=36000
+```
+
+正常候选在上一次 Tick 后 36,000 秒（10 小时）再次检查。Bot 启动时会先执行一次；被动会话忙碌、Source 错误或免打扰策略可以推迟投递。新闻仍经过 Judge、事件/正文/语义去重、每日限额、Delivery 和 ACK Outbox，不是绕过 Agent 的 Cron 脚本。
+
 ## 三模式协调
 
 优先级为：
