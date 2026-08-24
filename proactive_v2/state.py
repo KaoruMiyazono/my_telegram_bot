@@ -267,8 +267,14 @@ class ProactiveStateStore:
 
 
 def split_compound_event_id(compound: str) -> tuple[str, str]:
-    source_id, separator, event_id = str(compound).partition(":")
-    if not separator or not source_id or not event_id:
+    parts = str(compound).split(":", 2)
+    if len(parts) == 2:
+        source_id, event_id = parts
+    elif len(parts) == 3:
+        source_id, event_id = f"{parts[0]}:{parts[1]}", parts[2]
+    else:
+        raise ValueError(f"Invalid proactive evidence id: {compound!r}")
+    if not source_id or not event_id:
         raise ValueError(f"Invalid proactive evidence id: {compound!r}")
     return source_id, event_id
 

@@ -10,6 +10,7 @@
 - 🤖 **工具调用**：通过 ToolRegistry / ToolExecutor 统一调度内置记忆工具和插件工具
 - 🌐 **联网检索**：内置 `web_search` 和安全版 `web_fetch`，支持时效性搜索、来源核实和 URL 引用
 - 🧩 **插件生命周期**：支持 Akashic 风格 PhaseModule、slot export、prompt_render 插入点
+- 📡 **主动 Agent**：Gate/Fetch/Judge/Resolve/Deliver 五阶段链，支持三类 MCP Source、Shadow、去重和精确 ACK
 
 ## 技术栈
 
@@ -73,6 +74,20 @@ WEB_FETCH_MAX_CHARS=15000
 
 `web_fetch` 只允许访问公开 HTTP/HTTPS 地址，会阻止本机、内网、保留地址、云元数据地址及指向这些地址的重定向。
 
+主动 Agent 默认关闭。M9 使用 `config/proactive_sources.toml` 声明
+alert/content/context Source；Source 可独立动态启停，一个 MCP Server 可以提供
+多个 Source。建议先使用 Shadow Mode：
+
+```dotenv
+PROACTIVE_ENABLED=true
+PROACTIVE_MODE=shadow
+PROACTIVE_CHAT_ID=
+PROACTIVE_USER_ID=
+PROACTIVE_SOURCE_CONFIG_PATH=./config/proactive_sources.toml
+```
+
+本地 `proactive_demo` Server 和三个示例 Source 默认均为 disabled，不会自动发送测试数据。
+
 请勿提交 `.env`、数据库、运行日志或用户对话数据；这些内容已由 `.gitignore` 排除。
 
 ### Docker 部署
@@ -104,7 +119,7 @@ telegram-bot-mvp/
 ├── persistence/         # 数据持久化
 │   ├── database.py      # SQLite + sqlite-vec
 │   └── session_store.py # 原始消息与会话游标
-├── proactive_v2/        # 主动推送链路 scaffold
+├── proactive_v2/        # 五阶段主动Agent、MCP Source、去重、投递与ACK
 ├── config/             # 配置管理
 │   └── settings.py      # Pydantic 设置
 ├── tests/              # 单元测试

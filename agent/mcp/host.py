@@ -62,6 +62,19 @@ class McpHost:
                 runtime.status = "draining"
             return runtime
 
+    async def tool_names(self, server_name: str, generation: int) -> frozenset[str]:
+        async with self._lock:
+            runtime = self._active.get(server_name)
+            if (
+                runtime is None
+                or runtime.status != "ready"
+                or runtime.generation != generation
+            ):
+                raise McpGenerationStaleError(
+                    f"MCP generation is no longer active: {server_name}@{generation}"
+                )
+            return frozenset(tool.name for tool in runtime.tools)
+
     async def call(
         self,
         *,

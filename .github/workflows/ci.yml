@@ -50,6 +50,7 @@ jobs:
             proactive_v2/state.py \
             proactive_v2/agent_tick.py \
             proactive_v2/loop.py \
+            proactive_v2/mcp_sources.py \
             memory/store.py \
             persistence/session_store.py \
             main.py

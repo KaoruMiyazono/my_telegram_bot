@@ -31,8 +31,13 @@ from agent.runtime.turn_runtime import TurnRuntime
 from agent.tools.message_push import MessagePushTool
 from proactive_v2.agent_tick import AgentTick
 from proactive_v2.contracts import ProactivePolicy
-from proactive_v2.gateway import DataGateway
 from proactive_v2.loop import ProactiveLoop
+from proactive_v2.mcp_sources import (
+    McpManagerSourceCaller,
+    McpProactiveGateway,
+    ProactiveSourceRegistry,
+    register_proactive_source_management_tools,
+)
 from proactive_v2.state import ProactiveStateStore
 
 # Configure logging
@@ -111,6 +116,11 @@ async def main() -> None:
     )
     register_mcp_management_tools(tool_registry, mcp_manager)
     await mcp_manager.start()
+    proactive_sources = ProactiveSourceRegistry.from_config(
+        settings.PROACTIVE_SOURCE_CONFIG_PATH
+    )
+    proactive_sources.validate_servers(set(mcp_manager.specs))
+    register_proactive_source_management_tools(tool_registry, proactive_sources)
 
     # 5. Initialize plugin runtime after built-ins, so plugin tools can override by name. 初始化插件管理
     plugin_manager = PluginManager(
@@ -221,6 +231,10 @@ async def main() -> None:
 
         push_tool.register_channel("telegram", text=send_proactive_text)
         proactive_state = ProactiveStateStore()
+        proactive_gateway = McpProactiveGateway(
+            McpManagerSourceCaller(mcp_manager),
+            proactive_sources,
+        )
         policy = ProactivePolicy(
             threshold=settings.PROACTIVE_THRESHOLD,
             cooldown_seconds=settings.PROACTIVE_COOLDOWN_SECONDS,
@@ -238,7 +252,7 @@ async def main() -> None:
         )
         proactive_loop = ProactiveLoop(
             AgentTick(
-                gateway=DataGateway(),
+                gateway=proactive_gateway,
                 push_tool=push_tool,
                 default_channel=settings.PROACTIVE_CHANNEL,
                 default_chat_id=settings.PROACTIVE_CHAT_ID,
@@ -248,6 +262,7 @@ async def main() -> None:
                 policy=policy,
                 state_store=proactive_state,
                 passive_busy_fn=turn_runtime.cancellation.is_active,
+                ack_handlers=proactive_gateway.ack_handlers(),
             ),
             interval_seconds=settings.PROACTIVE_INTERVAL_SECONDS,
         )

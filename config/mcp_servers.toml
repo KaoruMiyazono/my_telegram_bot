@@ -16,6 +16,16 @@ call_timeout = 30
 # [servers.exa.header_refs]
 # Authorization = "EXA_AUTHORIZATION"
 
+# M9 local controlled proactive Source server. It is disabled by default and
+# intended for development/integration tests before real providers are added.
+[servers.proactive_demo]
+transport = "stdio"
+enabled = false
+command = "python3"
+args = ["tests/fixtures/mcp_proactive_server.py"]
+connect_timeout = 20
+call_timeout = 30
+
 # [servers.local_demo]
 # transport = "stdio"
 # enabled = false

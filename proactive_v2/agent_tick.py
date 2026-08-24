@@ -20,7 +20,7 @@ from proactive_v2.contracts import (
     ResolveInput,
     TickPriority,
 )
-from proactive_v2.gateway import DataGateway, GatewayResult
+from proactive_v2.gateway import GatewayResult, ProactiveGateway
 from proactive_v2.stages import (
     AckHandler,
     AckOutboxDispatcher,
@@ -52,7 +52,7 @@ class AgentTick:
     def __init__(
         self,
         *,
-        gateway: DataGateway,
+        gateway: ProactiveGateway,
         push_tool: MessagePushTool,
         default_channel: str = "telegram",
         default_chat_id: str = "",

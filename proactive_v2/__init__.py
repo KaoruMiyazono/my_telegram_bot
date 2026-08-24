@@ -1,6 +1,12 @@
 from proactive_v2.agent_tick import AgentTick, ProactiveDecision, ProactiveTickResult
 from proactive_v2.gateway import DataGateway, GatewayResult
 from proactive_v2.loop import ProactiveLoop, build_proactive_loop
+from proactive_v2.mcp_sources import (
+    McpManagerSourceCaller,
+    McpProactiveGateway,
+    McpProactiveSourceSpec,
+    ProactiveSourceRegistry,
+)
 
 __all__ = [
     "AgentTick",
@@ -8,6 +14,10 @@ __all__ = [
     "GatewayResult",
     "ProactiveDecision",
     "ProactiveLoop",
+    "McpManagerSourceCaller",
+    "McpProactiveGateway",
+    "McpProactiveSourceSpec",
+    "ProactiveSourceRegistry",
     "ProactiveTickResult",
     "build_proactive_loop",
 ]

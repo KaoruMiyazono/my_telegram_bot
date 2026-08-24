@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Protocol
 
 logger = logging.getLogger(__name__)
 
@@ -14,6 +14,12 @@ class GatewayResult:
     context: list[dict[str, Any]] = field(default_factory=list)
     content_meta: list[dict[str, Any]] = field(default_factory=list)
     content_store: dict[str, str] = field(default_factory=dict)
+    source_failures: dict[str, str] = field(default_factory=dict)
+    quarantined: list[dict[str, Any]] = field(default_factory=list)
+
+
+class ProactiveGateway(Protocol):
+    async def run(self) -> GatewayResult: ...
 
 
 class DataGateway:

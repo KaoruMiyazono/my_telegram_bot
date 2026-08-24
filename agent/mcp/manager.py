@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from agent.mcp.client import McpClient, McpClientProtocol
+from agent.mcp.client import McpCallResult
 from agent.mcp.host import McpHost, McpServerRuntime
 from agent.mcp.spec import McpServerSpec, load_mcp_specs
 from agent.mcp.state import McpRuntimeState, McpRuntimeStateStore
@@ -192,6 +193,28 @@ class McpManager:
                 await self.remove(name)
             except Exception as exc:
                 logger.error("MCP server failed to stop: name=%s error=%s", name, exc)
+
+    async def call_tool(
+        self,
+        server_name: str,
+        tool_name: str,
+        arguments: dict[str, object],
+    ) -> McpCallResult:
+        """Call one active remote tool without routing through the LLM catalog."""
+
+        self._configured(server_name)
+        state = self.state_store.get(server_name)
+        if state is None or state.status != "ready":
+            raise RuntimeError(f"MCP server is not ready: {server_name}")
+        names = await self.host.tool_names(server_name, state.generation)
+        if tool_name not in names:
+            raise ValueError(f"Unknown MCP tool: {server_name}.{tool_name}")
+        return await self.host.call(
+            server_name=server_name,
+            generation=state.generation,
+            remote_tool=tool_name,
+            arguments=arguments,
+        )
 
     def list_states(self) -> list[dict[str, Any]]:
         configured = []

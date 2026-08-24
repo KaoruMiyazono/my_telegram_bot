@@ -1,0 +1,31 @@
+# M9 proactive MCP Source declarations.
+#
+# Source identity is always <plugin_id>:<table-name>. Sources are independently
+# enabled/disabled at runtime; this does not start or stop their shared MCP
+# Server. The local demo entries remain off in production by default.
+
+[sources.health_alerts]
+plugin_id = "builtin"
+channels = ["alert"]
+mcp_server = "proactive_demo"
+fetch_tool = "fetch_alerts"
+ack_tool = "ack_events"
+page_size = 50
+enabled = false
+
+[sources.news_content]
+plugin_id = "builtin"
+channels = ["content"]
+mcp_server = "proactive_demo"
+fetch_tool = "fetch_content"
+ack_tool = "ack_events"
+page_size = 50
+enabled = false
+
+[sources.user_context]
+plugin_id = "builtin"
+channels = ["context"]
+mcp_server = "proactive_demo"
+fetch_tool = "fetch_context"
+page_size = 0
+enabled = false

@@ -45,6 +45,7 @@ class Settings(BaseSettings):
     PROACTIVE_URGENT_BYPASS_COOLDOWN: bool = True
     PROACTIVE_URGENT_BYPASS_QUIET: bool = True
     PROACTIVE_URGENT_BYPASS_DAILY_LIMIT: bool = False
+    PROACTIVE_SOURCE_CONFIG_PATH: str = "./config/proactive_sources.toml"
 
     # Generic MCP runtime
     MCP_CONFIG_PATH: str = "./config/mcp_servers.toml"
