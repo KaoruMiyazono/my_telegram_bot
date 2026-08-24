@@ -46,7 +46,7 @@ class PassiveTurnPipeline:
         self._consolidation = consolidation_worker
         self._invalidation = invalidation_worker
         self._memory_runtime = memory_runtime
-        self._consolidation_inflight: set[tuple[int, int]] = set()
+        self._consolidation_inflight: set[object] = set()
         self.last_trace: TurnTrace | None = None
         self.last_reasoner_result = None
 
@@ -156,6 +156,7 @@ class PassiveTurnPipeline:
         after_ctx.turn_id = trace.identity.turn_id
         after_ctx.trace_id = trace.identity.trace_id
         after_ctx.session_key = trace.identity.session_key
+        after_ctx.channel = inbound_message.channel
 
         # Persist messages（对应 akashic PostResponseWorker：异步，不阻塞回复） 持久化记忆，但是现在还没做
         asyncio.create_task(
@@ -195,6 +196,13 @@ class PassiveTurnPipeline:
             inbound_message.chat_id,
             turn_ctx.session.messages,
             last_consolidated=turn_ctx.session.last_consolidated,
+            session_key=(
+                turn_ctx.session.session_key
+                if inbound_message.metadata.get("account_id") is not None
+                or inbound_message.metadata.get("thread_id") is not None
+                else ""
+            ),
+            channel=turn_ctx.session.channel,
         )
         self._refresh_markdown_recent_turns(turn_ctx.session, inbound_message.user_id)
 
@@ -284,7 +292,7 @@ class PassiveTurnPipeline:
 
         user_id = inbound_message.user_id
         chat_id = inbound_message.chat_id
-        session_key = (user_id, chat_id)
+        session_key: object = session.session_key or (user_id, chat_id)
         if session_key in self._consolidation_inflight:
             return
         self._consolidation_inflight.add(session_key)
@@ -303,6 +311,13 @@ class PassiveTurnPipeline:
                     chat_id,
                     session.messages,
                     last_consolidated=session.last_consolidated,
+                    session_key=(
+                        session.session_key
+                        if inbound_message.metadata.get("account_id") is not None
+                        or inbound_message.metadata.get("thread_id") is not None
+                        else ""
+                    ),
+                    channel=session.channel,
                 )
             except Exception:
                 import logging

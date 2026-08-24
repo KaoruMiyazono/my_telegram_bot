@@ -30,6 +30,15 @@ class Settings(BaseSettings):
     IDLE_TASKS_ENABLED: bool = True
     IDLE_TASK_POLL_SECONDS: float = 5.0
 
+    # M12 channel gateway (Telegram stays enabled by the main process)
+    CHANNEL_WEB_ENABLED: bool = False
+    CHANNEL_WEB_HOST: str = "127.0.0.1"
+    CHANNEL_WEB_PORT: int = 8080
+    CHANNEL_API_TOKEN: str = ""
+    CHANNEL_CLI_ENABLED: bool = False
+    CHANNEL_CLI_ACCOUNT_ID: str = "local"
+    STREAM_SUBSCRIBER_QUEUE_SIZE: int = 128
+
     # M8 proactive runtime (disabled until a target is configured explicitly)
     PROACTIVE_ENABLED: bool = False
     PROACTIVE_MODE: str = "shadow"

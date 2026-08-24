@@ -36,6 +36,8 @@ class SessionStore:
         messages: list[dict[str, Any]],
         *,
         last_consolidated: int | None = None,
+        session_key: str = "",
+        channel: str = "",
     ) -> None:
         """保存会话消息和 consolidation 游标到数据库（upsert）
 
@@ -47,6 +49,30 @@ class SessionStore:
         """
         conn = get_connection()
         cursor = int(last_consolidated) if last_consolidated is not None else None
+        if session_key:
+            conn.execute(
+                """INSERT INTO channel_conversation_sessions(
+                    session_key, user_id, chat_id, channel, messages_json,
+                    last_consolidated, updated_at
+                ) VALUES (?, ?, ?, ?, ?, COALESCE(?, 0), CURRENT_TIMESTAMP)
+                ON CONFLICT(session_key) DO UPDATE SET
+                    messages_json=excluded.messages_json,
+                    last_consolidated=COALESCE(
+                        ?, channel_conversation_sessions.last_consolidated
+                    ),
+                    updated_at=CURRENT_TIMESTAMP""",
+                (
+                    session_key,
+                    user_id,
+                    chat_id,
+                    channel or session_key.split(":", 1)[0],
+                    json.dumps(messages, ensure_ascii=False),
+                    cursor,
+                    cursor,
+                ),
+            )
+            conn.commit()
+            return
         conn.execute(
             """
             INSERT INTO conversation_sessions
@@ -78,6 +104,8 @@ class SessionStore:
         self,
         user_id: int,
         chat_id: int,
+        *,
+        session_key: str = "",
     ) -> tuple[list[dict[str, Any]], int] | None:
         """从数据库加载会话消息和 consolidation 游标。
 
@@ -89,6 +117,23 @@ class SessionStore:
             (消息列表, last_consolidated)，如果不存在返回 None
         """
         conn = get_connection()
+        if session_key:
+            row = conn.execute(
+                """SELECT messages_json, last_consolidated
+                   FROM channel_conversation_sessions WHERE session_key=?""",
+                (session_key,),
+            ).fetchone()
+            if row is None:
+                return None
+            try:
+                return json.loads(row[0]), int(row[1] or 0)
+            except json.JSONDecodeError as error:
+                logger.warning(
+                    "Failed to parse channel session JSON key=%s: %s",
+                    session_key,
+                    error,
+                )
+                return None
         row = conn.execute(
             """
             SELECT messages_json, last_consolidated

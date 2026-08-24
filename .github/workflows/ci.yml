@@ -44,6 +44,10 @@ jobs:
             agent/runtime/cancellation.py \
             agent/runtime/mode_coordinator.py \
             agent/runtime/idle_tasks.py \
+            agent/runtime/stream_events.py \
+            channels/base.py \
+            channels/cli_adapter.py \
+            channels/web_gateway.py \
             agent/tools/web_search.py \
             agent/tools/web_fetch.py \
             agent/tools/web.py \

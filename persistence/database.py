@@ -76,6 +76,21 @@ CREATE TABLE IF NOT EXISTS conversation_sessions (
     PRIMARY KEY (user_id, chat_id)
 );
 
+-- M12 channel-aware raw sessions. Legacy callers keep the table above.
+CREATE TABLE IF NOT EXISTS channel_conversation_sessions (
+    session_key TEXT PRIMARY KEY,
+    user_id INTEGER NOT NULL,
+    chat_id INTEGER NOT NULL,
+    channel TEXT NOT NULL,
+    messages_json TEXT NOT NULL DEFAULT '[]',
+    last_consolidated INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_channel_sessions_user
+ON channel_conversation_sessions(user_id, updated_at);
+
 -- Immutable session context compaction ledger. Raw messages remain in
 -- conversation_sessions.messages_json and are never rewritten by compaction.
 CREATE TABLE IF NOT EXISTS session_compactions (
@@ -162,6 +177,42 @@ CREATE TABLE IF NOT EXISTS idle_tasks (
 
 CREATE INDEX IF NOT EXISTS idx_idle_tasks_ready
 ON idle_tasks(status, not_before, priority, created_at);
+
+-- Durable ordered stream used by Telegram, CLI, WebSocket and HTTP/SSE.
+CREATE TABLE IF NOT EXISTS runtime_stream_events (
+    event_id TEXT PRIMARY KEY,
+    session_key TEXT NOT NULL,
+    turn_id TEXT NOT NULL,
+    trace_id TEXT NOT NULL,
+    seq INTEGER NOT NULL,
+    event_type TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    terminal INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    UNIQUE(session_key, seq)
+);
+
+CREATE INDEX IF NOT EXISTS idx_runtime_stream_turn
+ON runtime_stream_events(turn_id, seq);
+
+CREATE TABLE IF NOT EXISTS runtime_stream_acks (
+    channel TEXT NOT NULL,
+    client_id TEXT NOT NULL,
+    session_key TEXT NOT NULL,
+    acked_seq INTEGER NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY(channel, client_id, session_key)
+);
+
+CREATE TABLE IF NOT EXISTS channel_identities (
+    channel TEXT NOT NULL,
+    account_id TEXT NOT NULL,
+    user_id INTEGER NOT NULL,
+    explicit_binding INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY(channel, account_id)
+);
 """
 
 

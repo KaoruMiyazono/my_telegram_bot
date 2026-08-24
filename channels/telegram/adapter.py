@@ -18,6 +18,7 @@ if TYPE_CHECKING:
 
 from agent.core.envelope import MessageEnvelope, MessagePriority, envelope_from_inbound
 from agent.core.types import InboundMessage
+from channels.base import ChannelIdentityStore, ChannelRequest, RuntimeChannelAdapter
 
 logger = logging.getLogger(__name__)
 
@@ -31,12 +32,20 @@ class TelegramAdapter:
         pipeline: "PassiveTurnPipeline | None" = None,
         proxy: str | None = None,
         runtime: "TurnRuntime | None" = None,
+        identities: ChannelIdentityStore | None = None,
     ) -> None:
         self.token = token
         self.pipeline = pipeline
         self.proxy = proxy
         self.runtime = runtime
         self.application: Application | None = None
+        self._initialized = False
+        self.identities = identities
+        self._runtime_adapter = (
+            RuntimeChannelAdapter(runtime, identities)
+            if runtime is not None and identities is not None
+            else None
+        )
 
     async def _handle_message(
         self,
@@ -65,19 +74,48 @@ class TelegramAdapter:
             )
 
             if self.runtime is not None:
-                inbound = InboundMessage(
-                    user_id=inbound.user_id,
-                    chat_id=inbound.chat_id,
-                    content=inbound.content,
-                    metadata={**inbound.metadata, "preempt_active": True},
-                    channel=inbound.channel,
+                account_id = str(update.effective_user.id)
+                thread_id = str(
+                    getattr(update.effective_message, "message_thread_id", None) or "main"
                 )
-                accepted = await self.runtime.bus.publish_inbound(
-                    envelope_from_inbound(
-                        inbound,
-                        client_message_id=f"telegram:{update.update_id}",
+                if self._runtime_adapter is not None and self.identities is not None:
+                    user_id = self.identities.resolve(
+                        "telegram",
+                        account_id,
+                        trusted_native_user_id=update.effective_user.id,
                     )
-                )
+                    receipt = await self._runtime_adapter.submit(
+                        ChannelRequest(
+                            channel="telegram",
+                            account_id=account_id,
+                            chat_id=update.effective_chat.id,
+                            thread_id=thread_id,
+                            content=inbound.content,
+                            user_id=user_id,
+                            client_message_id=f"telegram:{update.update_id}",
+                            metadata={**inbound.metadata, "preempt_active": True},
+                        )
+                    )
+                    accepted = receipt.accepted
+                else:
+                    inbound = InboundMessage(
+                        user_id=inbound.user_id,
+                        chat_id=inbound.chat_id,
+                        content=inbound.content,
+                        metadata={
+                            **inbound.metadata,
+                            "preempt_active": True,
+                            "account_id": account_id,
+                            "thread_id": thread_id,
+                        },
+                        channel=inbound.channel,
+                    )
+                    accepted = await self.runtime.bus.publish_inbound(
+                        envelope_from_inbound(
+                            inbound,
+                            client_message_id=f"telegram:{update.update_id}",
+                        )
+                    )
                 if not accepted:
                     logger.info("Duplicate Telegram update ignored update_id=%s", update.update_id)
             elif self.pipeline is not None:
@@ -115,20 +153,45 @@ class TelegramAdapter:
             if update.effective_message:
                 await update.effective_message.reply_text("当前运行模式不支持中断。")
             return
-        inbound = InboundMessage(
-            user_id=update.effective_user.id,
-            chat_id=update.effective_chat.id,
-            content="/stop",
-            metadata={"update_id": update.update_id},
-            channel="telegram",
+        account_id = str(update.effective_user.id)
+        thread_id = str(
+            getattr(update.effective_message, "message_thread_id", None) or "main"
         )
-        await self.runtime.bus.publish_inbound(
-            envelope_from_inbound(
-                inbound,
-                client_message_id=f"telegram:{update.update_id}",
-                priority=MessagePriority.INTERRUPT,
+        if self._runtime_adapter is not None and self.identities is not None:
+            user_id = self.identities.resolve(
+                "telegram", account_id, trusted_native_user_id=update.effective_user.id
             )
-        )
+            await self._runtime_adapter.cancel(
+                ChannelRequest(
+                    channel="telegram",
+                    account_id=account_id,
+                    chat_id=update.effective_chat.id,
+                    thread_id=thread_id,
+                    content="/stop",
+                    user_id=user_id,
+                    client_message_id=f"telegram:{update.update_id}",
+                    metadata={"update_id": update.update_id},
+                )
+            )
+        else:
+            inbound = InboundMessage(
+                user_id=update.effective_user.id,
+                chat_id=update.effective_chat.id,
+                content="/stop",
+                metadata={
+                    "update_id": update.update_id,
+                    "account_id": account_id,
+                    "thread_id": thread_id,
+                },
+                channel="telegram",
+            )
+            await self.runtime.bus.publish_inbound(
+                envelope_from_inbound(
+                    inbound,
+                    client_message_id=f"telegram:{update.update_id}",
+                    priority=MessagePriority.INTERRUPT,
+                )
+            )
 
     async def send_envelope(self, envelope: MessageEnvelope) -> None:
         await self.send(envelope.as_outbound())
@@ -210,6 +273,7 @@ class TelegramAdapter:
 
         logger.info("Starting Telegram bot polling...")
         await self.application.initialize()
+        self._initialized = True
         await self.application.start()
         await self.application.updater.start_polling(drop_pending_updates=False)
 
@@ -217,6 +281,10 @@ class TelegramAdapter:
         """Stop the bot."""
         if self.application:
             logger.info("Stopping Telegram bot...")
-            await self.application.updater.stop()
-            await self.application.stop()
-            await self.application.shutdown()
+            if self.application.updater.running:
+                await self.application.updater.stop()
+            if self.application.running:
+                await self.application.stop()
+            if self._initialized:
+                await self.application.shutdown()
+                self._initialized = False

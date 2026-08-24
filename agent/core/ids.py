@@ -16,10 +16,21 @@ class TurnIdentity:
     trace_id: str
 
 
-def build_session_key(*, channel: str, chat_id: int | str, user_id: int | str) -> str:
+def build_session_key(
+    *,
+    channel: str,
+    chat_id: int | str,
+    user_id: int | str,
+    account_id: int | str | None = None,
+    thread_id: int | str | None = None,
+) -> str:
     """Build the canonical cross-channel session isolation key."""
 
     normalized_channel = str(channel or "telegram").strip().lower() or "telegram"
+    if account_id is not None or thread_id is not None:
+        account = str(account_id if account_id is not None else user_id).strip() or str(user_id)
+        thread = str(thread_id if thread_id is not None else "main").strip() or "main"
+        return f"{normalized_channel}:{account}:{chat_id}:{thread}"
     return f"{normalized_channel}:{chat_id}:{user_id}"
 
 
@@ -50,6 +61,8 @@ def identity_for_message(
             channel=effective_channel,
             chat_id=chat_id,
             user_id=user_id,
+            account_id=values.get("account_id"),
+            thread_id=values.get("thread_id"),
         ),
         trace_id=trace_id or str(values.get("trace_id") or "") or new_trace_id(),
     )

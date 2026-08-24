@@ -16,6 +16,8 @@ from agent.core.types import OutboundMessage
 from agent.pipeline.passive_turn import PassiveTurnPipeline
 from agent.runtime.cancellation import CancellationRegistry, InterruptResult
 from agent.runtime.mode_coordinator import ModeCoordinator
+from agent.runtime.stream_events import StreamEventBroker, ToolStreamBridge
+from agent.core.event_bus import EventBus
 
 logger = logging.getLogger(__name__)
 
@@ -30,11 +32,19 @@ class TurnRuntime:
         pipeline: PassiveTurnPipeline,
         cancellation: CancellationRegistry | None = None,
         mode_coordinator: ModeCoordinator | None = None,
+        stream_broker: StreamEventBroker | None = None,
+        event_bus: EventBus | None = None,
     ) -> None:
         self.bus = bus
         self.pipeline = pipeline
         self.cancellation = cancellation or CancellationRegistry()
         self.mode_coordinator = mode_coordinator
+        self.stream_broker = stream_broker
+        self._tool_stream_bridge = (
+            ToolStreamBridge(stream_broker, event_bus or EventBus.get_instance())
+            if stream_broker is not None
+            else None
+        )
         self.lanes = SessionLaneManager(
             self._execute,
             self.cancellation,
@@ -46,6 +56,8 @@ class TurnRuntime:
     async def start(self) -> None:
         self._stopping = False
         await self.bus.start()
+        if self._tool_stream_bridge is not None:
+            self._tool_stream_bridge.start()
         if self._consumer is None or self._consumer.done():
             self._consumer = asyncio.create_task(self._consume(), name="turn-runtime")
 
@@ -60,6 +72,8 @@ class TurnRuntime:
             self._consumer = None
         await self.lanes.close()
         await self.bus.stop()
+        if self._tool_stream_bridge is not None:
+            self._tool_stream_bridge.close()
 
     def interrupt(self, session_key: str) -> InterruptResult:
         return self.cancellation.interrupt(session_key)
@@ -80,22 +94,67 @@ class TurnRuntime:
     async def _execute(self, envelope: MessageEnvelope) -> object:
         self.bus.store.mark(envelope.message_id, "running", increment_attempts=True)
         trace_id = str(envelope.payload.get("trace_id") or envelope.message_id)
+        turn_id = str(envelope.payload.get("turn_id") or envelope.message_id)
+        if self.stream_broker is not None:
+            await self.stream_broker.publish(
+                session_key=envelope.session_key,
+                turn_id=turn_id,
+                trace_id=trace_id,
+                event_type="turn.started",
+                payload={"channel": envelope.channel},
+            )
         if self.mode_coordinator is not None:
             await self.mode_coordinator.enter_passive(
                 envelope.session_key, trace_id=trace_id
             )
         try:
             outbound = await self.pipeline.execute(envelope.as_inbound())
+            if self.stream_broker is not None:
+                for delta in _content_chunks(outbound.content):
+                    await self.stream_broker.publish(
+                        session_key=envelope.session_key,
+                        turn_id=turn_id,
+                        trace_id=trace_id,
+                        event_type="assistant.delta",
+                        payload={"delta": delta},
+                    )
             delivered = await self.bus.publish_outbound_and_wait(
                 envelope_from_outbound(outbound, inbound=envelope)
             )
             if not delivered:
                 raise RuntimeError("outbound delivery failed")
+            if self.stream_broker is not None:
+                await self.stream_broker.publish(
+                    session_key=envelope.session_key,
+                    turn_id=turn_id,
+                    trace_id=trace_id,
+                    event_type="turn.completed",
+                    payload={"status": "completed", "content": outbound.content},
+                )
         except asyncio.CancelledError:
             self.bus.store.mark(envelope.message_id, "cancelled")
+            if self.stream_broker is not None:
+                await self.stream_broker.publish(
+                    session_key=envelope.session_key,
+                    turn_id=turn_id,
+                    trace_id=trace_id,
+                    event_type="turn.cancelled",
+                    payload={"status": "cancelled"},
+                )
             raise
-        except Exception:
+        except Exception as error:
             self.bus.store.mark(envelope.message_id, "failed")
+            if self.stream_broker is not None:
+                await self.stream_broker.publish(
+                    session_key=envelope.session_key,
+                    turn_id=turn_id,
+                    trace_id=trace_id,
+                    event_type="turn.completed",
+                    payload={
+                        "status": "failed",
+                        "error_type": type(error).__name__,
+                    },
+                )
             raise
         else:
             self.bus.store.mark(envelope.message_id, "done")
@@ -116,3 +175,8 @@ class TurnRuntime:
     def _mark_cancelled(self, envelope: MessageEnvelope) -> None:
         if self.bus.store.status(envelope.message_id) not in {"done", "failed", "cancelled"}:
             self.bus.store.mark(envelope.message_id, "cancelled")
+
+
+def _content_chunks(content: str, size: int = 160) -> list[str]:
+    value = str(content or "")
+    return [value[index : index + size] for index in range(0, len(value), size)] or [""]

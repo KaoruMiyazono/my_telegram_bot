@@ -2,7 +2,7 @@ from collections.abc import Sequence
 from typing import Any
 
 from agent.core.event_bus import EventBus
-from agent.core.ids import build_session_key
+from agent.core.ids import build_session_key, identity_for_message
 from agent.core.types import BeforeTurnCtx, InboundMessage, MemoryItem, Session
 from agent.lifecycle.phase import (
     PhaseFrame,
@@ -15,7 +15,7 @@ from memory.store import LONG_TERM_MEMORY_TYPES
 from persistence.session_store import get_session_store
 
 # 内存缓存（对应 akashic sm._cache），SessionStore 负责持久化
-_sessions: dict[tuple[int, int], Session] = {}
+_sessions: dict[object, Session] = {}
 
 # RRF 融合参数
 _SESSION_SLOT = "session:session"
@@ -44,13 +44,35 @@ class BeforeTurnPhase:
         self.last_retrieval_trace: dict = {}
 
     async def acquire_session(self, message: InboundMessage) -> Session:
-        key = (message.user_id, message.chat_id)
+        identity = identity_for_message(
+            user_id=message.user_id,
+            chat_id=message.chat_id,
+            channel=message.channel,
+            metadata=message.metadata,
+            turn_id=message.turn_id,
+            trace_id=message.trace_id,
+        )
+        channel_aware = (
+            message.metadata.get("account_id") is not None
+            or message.metadata.get("thread_id") is not None
+        )
+        key: object = (
+            identity.session_key
+            if channel_aware
+            else (message.user_id, message.chat_id)
+        )
         session = _sessions.get(key)
         #  内存缓存里面有就直接返回，没有就去数据库里面查找，如果数据库里面也没有，就创建一个新的session对象，并且存到内存缓存里面
         if session is not None:
             return session
         session_store = get_session_store()
-        session_state = session_store.load_state(message.user_id, message.chat_id)
+        session_state = session_store.load_state(
+            message.user_id,
+            message.chat_id,
+            session_key=identity.session_key if channel_aware else "",
+        )
+        if session_state is None and channel_aware and message.channel == "telegram":
+            session_state = session_store.load_state(message.user_id, message.chat_id)
         if session_state is None:
             saved_messages = []
             last_consolidated = 0
@@ -61,11 +83,7 @@ class BeforeTurnPhase:
             chat_id=message.chat_id,
             messages=saved_messages,
             last_consolidated=last_consolidated,
-            session_key=build_session_key(
-                channel=message.channel,
-                chat_id=message.chat_id,
-                user_id=message.user_id,
-            ),
+            session_key=identity.session_key,
             channel=message.channel,
         )
         _sessions[key] = session

@@ -8,7 +8,7 @@ from enum import IntEnum
 from typing import Any, Literal, cast
 from uuid import uuid4
 
-from agent.core.ids import build_session_key
+from agent.core.ids import identity_for_message
 from agent.core.types import InboundMessage, OutboundMessage
 
 
@@ -102,14 +102,17 @@ def envelope_from_inbound(
     client_message_id: str | None = None,
     priority: MessagePriority = MessagePriority.NORMAL,
 ) -> MessageEnvelope:
-    session_key = build_session_key(
+    identity = identity_for_message(
         channel=message.channel,
         chat_id=message.chat_id,
         user_id=message.user_id,
+        metadata=message.metadata,
+        turn_id=message.turn_id,
+        trace_id=message.trace_id,
     )
     return MessageEnvelope(
         message_id=f"message:{uuid4().hex}",
-        session_key=session_key,
+        session_key=identity.session_key,
         channel=message.channel,
         user_id=message.user_id,
         chat_id=message.chat_id,
@@ -117,8 +120,8 @@ def envelope_from_inbound(
         payload={
             "content": message.content,
             "metadata": dict(message.metadata),
-            "turn_id": message.turn_id,
-            "trace_id": message.trace_id,
+            "turn_id": identity.turn_id,
+            "trace_id": identity.trace_id,
         },
         created_at=datetime.now(timezone.utc),
         priority=priority,

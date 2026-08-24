@@ -12,6 +12,7 @@
 - 🧩 **插件生命周期**：支持 Akashic 风格 PhaseModule、slot export、prompt_render 插入点
 - 📡 **主动 Agent**：五阶段主动链读取用户长期兴趣，支持三类 MCP Source、个性化内容判断、自适应调度、五层去重和可恢复精确 ACK
 - 💤 **三模式协调**：Passive > Proactive > Idle；用户消息可暂停并恢复持久化后台维护任务
+- 📱 **四类终端**：Telegram、CLI、WebSocket、HTTP/SSE 共用 TurnRuntime，支持有序事件、取消、ACK 与断线续传
 
 ## 技术栈
 
@@ -112,6 +113,50 @@ IDLE_TASKS_ENABLED=true
 IDLE_TASK_POLL_SECONDS=5
 ```
 
+M12 将四类终端统一到同一个 `TurnRuntime`。终端只做输入标准化、身份映射、
+事件渲染、最终投递和客户端 ACK；Agent Pipeline 不依赖 Telegram SDK。统一事件包括：
+
+```text
+turn.started → assistant.delta / tool.* → turn.completed | turn.cancelled
+```
+
+事件先持久化到 `runtime_stream_events`，再非阻塞广播。客户端可使用 `seq` 和
+`runtime_stream_acks` 断线续传，也可以通过 `/v1/result/{turn_id}` 直接获取最终结果。
+当前 LLM 调用仍是非流式接口，因此 `assistant.delta` 是最终答案的分块投影；工具开始和
+结束事件则会在执行时实时产生。
+
+启用本地 HTTP/SSE + WebSocket Gateway：
+
+```dotenv
+CHANNEL_WEB_ENABLED=true
+CHANNEL_WEB_HOST=127.0.0.1
+CHANNEL_WEB_PORT=8080
+CHANNEL_API_TOKEN=replace-with-a-secret
+```
+
+主要接口：
+
+```text
+POST /v1/chat
+POST /v1/chat/cancel
+GET  /v1/events?session_key=...&after_seq=0
+POST /v1/events/ack
+GET  /v1/result/{turn_id}
+WS   /v1/ws
+```
+
+启用同进程 CLI：
+
+```dotenv
+CHANNEL_CLI_ENABLED=true
+CHANNEL_CLI_ACCOUNT_ID=local
+```
+
+Session Key 使用 `<channel>:<account_id>:<chat_id>:<thread_id>`。不同终端默认分配
+不同用户身份和独立 Session；只有通过受保护的 `/v1/identities/bind` 显式绑定后才共享
+长期记忆，即使绑定后，各终端的当前对话原文仍然隔离。非回环地址启动 Web Gateway 时
+必须配置 `CHANNEL_API_TOKEN`。
+
 请勿提交 `.env`、数据库、运行日志或用户对话数据；这些内容已由 `.gitignore` 排除。
 
 ### Docker 部署
@@ -134,8 +179,7 @@ telegram-bot-mvp/
 │   ├── prompting/       # Prompt 渲染与 section 组装
 │   ├── tool_hooks/      # 工具调用前置 hook 链
 │   └── tools/           # ToolRegistry、ToolExecutor、记忆与 Web 内置工具
-├── channels/           # 消息通道
-│   └── telegram/        # Telegram 集成
+├── channels/           # 统一 Adapter、Telegram、CLI、WebSocket、HTTP/SSE
 ├── memory/             # 记忆管理
 │   ├── embedder.py      # 向量生成
 │   ├── hyde_enhancer.py # HyDE 检索增强

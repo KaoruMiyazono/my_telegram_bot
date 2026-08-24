@@ -30,6 +30,10 @@ from persistence.runtime_message_store import RuntimeMessageStore
 from agent.runtime.turn_runtime import TurnRuntime
 from agent.runtime.idle_tasks import IdleTaskResult, IdleTaskRuntime, IdleTaskStore
 from agent.runtime.mode_coordinator import ModeCoordinator
+from agent.runtime.stream_events import StreamEventBroker, StreamEventStore
+from channels.base import ChannelIdentityStore
+from channels.cli_adapter import CliAdapter
+from channels.web_gateway import WebGateway, WebGatewayServer
 from agent.tools.message_push import MessagePushTool
 from proactive_v2.agent_tick import AgentTick
 from proactive_v2.contracts import ProactivePolicy
@@ -223,19 +227,50 @@ async def main() -> None:
         memory_runtime=memory_runtime,
     )
 
-    # 9. Create asynchronous runtime and Telegram adapter.
+    # 9. Create one asynchronous runtime shared by all channel adapters.
     message_bus = MessageBus(RuntimeMessageStore())
+    stream_store = StreamEventStore()
+    stream_broker = StreamEventBroker(
+        stream_store,
+        subscriber_queue_size=settings.STREAM_SUBSCRIBER_QUEUE_SIZE,
+    )
+    channel_identities = ChannelIdentityStore()
     turn_runtime = TurnRuntime(
         bus=message_bus,
         pipeline=pipeline,
         mode_coordinator=mode_coordinator,
+        stream_broker=stream_broker,
+        event_bus=event_bus,
     )
     adapter = TelegramAdapter(
         token=settings.TG_BOT_TOKEN,
         proxy=settings.HTTP_PROXY,
         runtime=turn_runtime,
+        identities=channel_identities,
     )
     message_bus.subscribe_outbound("telegram", adapter.send_envelope)
+    web_server: WebGatewayServer | None = None
+    if settings.CHANNEL_WEB_ENABLED:
+        web_gateway = WebGateway(
+            turn_runtime,
+            channel_identities,
+            stream_broker,
+            api_token=settings.CHANNEL_API_TOKEN,
+        )
+        web_server = WebGatewayServer(
+            web_gateway,
+            host=settings.CHANNEL_WEB_HOST,
+            port=settings.CHANNEL_WEB_PORT,
+        )
+    cli_adapter: CliAdapter | None = None
+    cli_task: asyncio.Task[None] | None = None
+    if settings.CHANNEL_CLI_ENABLED:
+        cli_adapter = CliAdapter(
+            turn_runtime,
+            channel_identities,
+            stream_broker,
+            account_id=settings.CHANNEL_CLI_ACCOUNT_ID,
+        )
     proactive_loop: ProactiveLoop | None = None
     proactive_state: ProactiveStateStore | None = None
     if settings.PROACTIVE_ENABLED and settings.PROACTIVE_CHAT_ID.strip():
@@ -342,6 +377,17 @@ async def main() -> None:
                     + timedelta(seconds=settings.MEMORY_OPTIMIZER_INTERVAL_SECONDS),
                     trace_id="idle:memory_optimizer",
                 )
+        if web_server is not None:
+            await web_server.start()
+            logger.info(
+                "HTTP/SSE + WebSocket gateway started on %s:%s",
+                settings.CHANNEL_WEB_HOST,
+                settings.CHANNEL_WEB_PORT,
+            )
+        if cli_adapter is not None:
+            cli_task = asyncio.create_task(
+                cli_adapter.run_interactive(), name="cli-channel"
+            )
 
         # 10. Start bot
         logger.info("Starting Telegram bot...")
@@ -363,9 +409,16 @@ async def main() -> None:
             await proactive_loop.close()
         if proactive_state is not None:
             proactive_state.close()
+        if cli_task is not None:
+            cli_task.cancel()
+            await asyncio.gather(cli_task, return_exceptions=True)
+        if web_server is not None:
+            await web_server.stop()
         await idle_runtime.close()
         await adapter.stop()
         await turn_runtime.stop()
+        channel_identities.close()
+        stream_store.close()
         await mcp_manager.close()
         # Stop conversation logger
         await plugin_manager.terminate_all()
