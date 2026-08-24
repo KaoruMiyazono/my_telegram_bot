@@ -1,0 +1,105 @@
+# M13 business requirements mapped to concrete, deterministic pytest evidence.
+# Optional scenarios are archived too, but do not block Fast/Main CI.
+
+[[scenario]]
+id = "unit.context_budget"
+tier = "unit"
+title = "Context Budget 五级降级"
+patterns = ["tests/test_context_budget*.py::*"]
+
+[[scenario]]
+id = "unit.tool_catalog"
+tier = "unit"
+title = "Tool Catalog 搜索与按需暴露"
+patterns = ["tests/test_tool_discovery.py::*"]
+
+[[scenario]]
+id = "unit.mcp_state_machine"
+tier = "unit"
+title = "MCP Runtime 状态机"
+patterns = ["tests/test_mcp_runtime.py::*"]
+
+[[scenario]]
+id = "unit.deduper_ack"
+tier = "unit"
+title = "主动推送分层去重与 ACK Outbox"
+patterns = ["tests/test_m10_personalized_proactive.py::*dedup*", "tests/test_m10_personalized_proactive.py::*ack_outbox*"]
+
+[[scenario]]
+id = "integration.react_tool_runtime"
+tier = "integration"
+title = "ReAct 与 ToolRuntime 调用闭环"
+patterns = ["tests/test_reasoner.py::*", "tests/test_tool_runtime.py::*"]
+
+[[scenario]]
+id = "integration.mcp_add_remove"
+tier = "integration"
+title = "MCP Server 运行时注册与卸载"
+patterns = ["tests/test_mcp_runtime.py::*add*", "tests/test_mcp_runtime.py::*remove*"]
+
+[[scenario]]
+id = "integration.passive_proactive"
+tier = "integration"
+title = "被动问答与主动推送互斥"
+patterns = ["tests/test_m11_mode_coordinator.py::*passive*"]
+
+[[scenario]]
+id = "integration.memory_archive"
+tier = "integration"
+title = "Memory PENDING 与 Optimizer 两阶段归档"
+patterns = ["tests/test_memory_optimizer.py::*", "tests/test_consolidation_integration.py::*"]
+
+[[scenario]]
+id = "e2e.telegram_reply"
+tier = "e2e"
+title = "Telegram 入站到回复"
+patterns = ["tests/test_pipeline_integration.py::*", "tests/test_m1_async_runtime.py::*delivery*"]
+
+[[scenario]]
+id = "e2e.mcp_push_ack"
+tier = "e2e"
+title = "MCP Event 到主动推送与 ACK"
+patterns = ["tests/test_m9_proactive_mcp_sources.py::*", "tests/test_m10_personalized_proactive.py::*ack_outbox*"]
+
+[[scenario]]
+id = "e2e.idle_interrupt"
+tier = "e2e"
+title = "Idle Task 被被动会话中断并恢复"
+patterns = ["tests/test_m11_mode_coordinator.py::*idle*"]
+
+[[scenario]]
+id = "e2e.four_terminals"
+tier = "e2e"
+title = "Telegram/CLI/WebSocket/HTTP 四终端共享 Runtime"
+patterns = ["tests/test_m12_multichannel_streaming.py::*four_terminal*"]
+
+[[scenario]]
+id = "eval.long_memory"
+tier = "eval"
+title = "LongMemEval 本地确定性回归"
+patterns = ["tests/test_replay_runner.py::*", "tests/test_longmemeval_conversion.py::*"]
+
+[[scenario]]
+id = "eval.persona_memory"
+tier = "eval"
+title = "Persona/Profile/Preference 画像回归"
+patterns = ["tests/test_memory_optimizer.py::*profile*", "tests/test_m10_personalized_proactive.py::*interest*"]
+
+[[scenario]]
+id = "fault.restart_recovery"
+tier = "fault"
+title = "进程重启后的 Message/ACK/Idle 恢复"
+patterns = ["tests/test_m1_async_runtime.py::*recover*", "tests/test_m10_personalized_proactive.py::*restart*", "tests/test_m11_mode_coordinator.py::*restart*"]
+
+[[scenario]]
+id = "fault.hundred_sessions"
+tier = "fault"
+title = "100 个 Session 并发且单 Session 串行"
+patterns = ["tests/test_m13_quality_archive.py::*hundred_sessions*"]
+
+[[scenario]]
+id = "fault.external_services"
+tier = "nightly"
+title = "真实 MCP/LLM/Telegram 故障注入"
+patterns = ["tests/nightly/test_external_faults.py::*"]
+required = false

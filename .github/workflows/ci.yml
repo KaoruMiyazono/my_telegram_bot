@@ -64,10 +64,43 @@ jobs:
             main.py
 
       - name: Pyright core contracts
+        id: pyright
+        continue-on-error: true
         run: poetry run pyright
 
       - name: Unified pytest suite
-        run: poetry run pytest
+        id: pytest
+        continue-on-error: true
+        run: poetry run pytest --junitxml=data/evaluation/test-archive/junit.xml
 
       - name: RAG lifecycle smoke
+        id: rag
+        continue-on-error: true
         run: poetry run python eval/rag_layer_smoke.py
+
+      - name: Build M13 test archive
+        if: always() && hashFiles('data/evaluation/test-archive/junit.xml') != ''
+        run: |
+          poetry run python -m evaluation.test_archive build \
+            --junit data/evaluation/test-archive/junit.xml \
+            --scenario-config config/quality_scenarios.toml \
+            --output-dir data/evaluation/test-archive \
+            --pytest-status "${{ steps.pytest.outcome }}" \
+            --pyright-status "${{ steps.pyright.outcome }}" \
+            --rag-status "${{ steps.rag.outcome }}" \
+            --commit-sha "${{ github.sha }}" \
+            --branch "${{ github.ref_name }}" \
+            --run-id "${{ github.run_id }}-${{ github.run_attempt }}"
+
+      - name: Upload M13 test archive
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: m13-test-archive-${{ github.run_id }}-${{ github.run_attempt }}
+          path: data/evaluation/test-archive/
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Enforce archived quality gate
+        if: always()
+        run: poetry run python -m evaluation.test_archive verify data/evaluation/test-archive/latest.json

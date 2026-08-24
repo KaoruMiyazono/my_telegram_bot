@@ -37,6 +37,8 @@ data/evaluation/*
 !data/evaluation/green_set.json
 !data/evaluation/red_set.json
 !data/evaluation/retrieval_strategy_lab.jsonl
+# CI/local M13 archives are downloadable build artifacts, not source data.
+data/evaluation/test-archive/
 *.db
 *.db-*
 *.sqlite
